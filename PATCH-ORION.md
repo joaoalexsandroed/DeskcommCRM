@@ -19,10 +19,11 @@ já usam.
   - Serviço `caddy` removido (e os volumes `caddy-data`/`caddy-config`).
   - `app` ganhou a rede externa `janet` (→ `JANet`) e labels `deploy.labels` de
     roteamento Traefik (`Host(${DOMAIN})`, TLS via `letsencryptresolver` — o
-    mesmo resolver que as outras apps da VPS já usam). Inclui uma rota extra
-    de alta prioridade pra `/api/internal/agents/run*` com timeout maior (via
-    `serversTransport`), equivalente ao `read_timeout`/`write_timeout=320s`
-    que o `Caddyfile` original tinha pra essa rota.
+    mesmo resolver que as outras apps da VPS já usam), com `.service=` explícito
+    (necessário assim que há mais de um serviço Traefik no mesmo container).
+  - Rede `internal` virou `driver: ${INTERNAL_NETWORK_DRIVER:-bridge}` — Swarm
+    só aceita rede overlay pra serviço; `stack_up()` exporta `overlay` antes do
+    deploy (compose comum continua em `bridge`, sem tocar em nada).
   - `worker` trocou `build:` isolado por também ter `image:
     ${WORKER_IMAGE:-deskcommcrm-worker:local}` — Docker Swarm **não builda**
     (`docker stack deploy` ignora `build:`), então a imagem precisa existir
@@ -43,6 +44,35 @@ já usam.
   Traefik/Swarm prévio — detectam sozinhos qual caminho seguir.
 - **`ACME_EMAIL`** vira opcional no instalador nesta VPS (quem emite o SSL
   agora é o Traefik já existente, com o e-mail dele próprio).
+- **`env_file: ${ENV_FILE:-.env}`** (app/worker) — `docker stack deploy` não
+  remove as aspas simples que o `install.sh` grava em cada valor do `.env`
+  (diferente do `docker compose`, que remove). `stack_up()` gera um
+  `.env.stack` sem aspas (`write_stack_envfile`, em `_common.sh`) e aponta
+  `ENV_FILE` pra ele só no caminho Swarm. `stack_up()` também exporta o
+  `.env` pro shell antes do deploy, porque `docker stack deploy` (diferente
+  do `docker compose`) não lê o `.env` sozinho pra resolver `${VAR}` dentro
+  do próprio YAML (ex.: `WHATSAPP_HOOK_URL`, os labels do Traefik).
+
+## Limitação conhecida: timeout da rota do agente de IA
+
+O `Caddyfile` original dava `read_timeout`/`write_timeout=320s` só pra
+`/api/internal/agents/run*` (pode levar até ~5min). Tentei reproduzir isso no
+Traefik via um `serversTransport` dedicado (labels `traefik.http.serversTransports.*`)
+— não funcionou: o provider `swarm` do Traefik (`--providers.swarm=true`)
+nesta VPS não registra essa coleção vinda de labels (fica sempre vazia em
+`/api/http/serverstransports`), e o roteador que dependia dela ficava
+`disabled` ("servers transport not found"). Removido.
+
+Efeito prático: essa rota usa o timeout padrão do entrypoint `websecure`
+(`idleTimeout` 180s, sem limite de leitura/escrita). Como
+`app/api/internal/agents/run/route.ts` não faz streaming parcial, uma
+resposta muito longa e totalmente parada (sem nenhum byte de saída) por mais
+de 180s corre risco de ser cortada. Se isso se confirmar um problema real no
+uso, os caminhos são: (a) o endpoint passar a fazer streaming/heartbeat
+periódico, ou (b) subir o `idleTimeout` do entrypoint `websecure` — mas essa
+segunda opção é config **global** do Traefik desta VPS (afeta todas as apps
+já hospedadas aqui), exige reiniciar o serviço `traefik` e não deve ser feita
+sem avisar o dono da VPS antes.
 
 ## Como instalar (primeira vez)
 

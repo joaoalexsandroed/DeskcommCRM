@@ -30,11 +30,17 @@ services:
     # <PublicEnvScript/> e o servidor via lib/env.ts. Não precisa buildar no VPS.
     # Build local (avançado): docker compose -f docker-compose.prod.yml -f docker-compose.build.yml build
     image: ${APP_IMAGE:-ghcr.io/melgarafael/deskcommcrm:latest}
-    # `pull_policy` fica FORA daqui de propósito: `docker stack deploy`
-    # (variante ORION) rejeita essa chave ("Additional property pull_policy is
-    # not allowed"). O `dc pull`/`docker compose ... pull` explícito nos
-    # scripts já garante a imagem certa antes do up/deploy nos dois modos.
+    # pull_policy removido: `docker stack deploy` (Swarm) rejeita essa chave
+    # ("Additional property pull_policy is not allowed"). Quem garante a
+    # imagem atualizada antes do deploy é o `docker compose pull` explícito
+    # em stack_up() (_common.sh) — em compose comum, sem essa chave o
+    # comportamento padrão já é puxar a imagem quando ausente/desatualizada.
     restart: unless-stopped
+    # ${ENV_FILE:-.env}: `docker stack deploy` (Swarm) não remove as aspas
+    # simples que o install.sh grava em cada valor do .env (diferente do
+    # `docker compose`, que remove) — os containers receberiam "'valor'"
+    # literal. stack_up() (_common.sh) gera um .env.stack sem aspas e aponta
+    # ENV_FILE pra ele só nesse caminho; compose comum usa .env de sempre.
     env_file: ${ENV_FILE:-.env}
     depends_on: [srh, waha]
     healthcheck:
@@ -70,18 +76,17 @@ services:
         - "traefik.http.routers.deskcommcrm.service=deskcommcrm"
         - "traefik.http.services.deskcommcrm.loadbalancer.server.port=3000"
         - "traefik.http.services.deskcommcrm.loadbalancer.passHostHeader=1"
-        # Rota do agente de IA aguenta até ~5min de resposta — mesmo motivo do
-        # transport read_timeout/write_timeout=320s que o Caddy tinha no Caddyfile.
-        - "traefik.http.routers.deskcommcrm-agentrun.rule=Host(`${DOMAIN}`) && PathPrefix(`/api/internal/agents/run`)"
-        - "traefik.http.routers.deskcommcrm-agentrun.entrypoints=websecure"
-        - "traefik.http.routers.deskcommcrm-agentrun.tls.certresolver=letsencryptresolver"
-        - "traefik.http.routers.deskcommcrm-agentrun.priority=10"
-        - "traefik.http.routers.deskcommcrm-agentrun.service=deskcommcrm-agentrun"
-        - "traefik.http.services.deskcommcrm-agentrun.loadbalancer.server.port=3000"
-        - "traefik.http.services.deskcommcrm-agentrun.loadbalancer.serversTransport=deskcommcrm-agentrun"
-        - "traefik.http.serversTransports.deskcommcrm-agentrun.forwardingTimeouts.dialTimeout=30s"
-        - "traefik.http.serversTransports.deskcommcrm-agentrun.forwardingTimeouts.responseHeaderTimeout=330s"
-        - "traefik.http.serversTransports.deskcommcrm-agentrun.forwardingTimeouts.idleConnTimeout=330s"
+        # NÃO tem serversTransport dedicado pra /api/internal/agents/run (que o
+        # Caddyfile original dava read/write_timeout=320s): testado nesta VPS,
+        # o provider "swarm" do Traefik (--providers.swarm=true) não registra
+        # `traefik.http.serversTransports.*` vindo de labels — a coleção fica
+        # sempre vazia (/api/http/serverstransports), e o router que referenciava
+        # essa transport ficava "disabled" (servers transport not found). Rota
+        # cai no timeout padrão do entrypoint websecure (idleTimeout 180s,
+        # read/write ilimitados) — como o endpoint não faz streaming parcial
+        # (ver app/api/internal/agents/run/route.ts), uma resposta muito longa
+        # sem nenhum byte de saída ainda corre risco de ser cortada aos 180s
+        # de inatividade. Ver PATCH-ORION.md.
 
 
   # Worker 24/7 do agent-engine (fusão Vendaval) — cérebro do agente SDR.
@@ -95,8 +100,15 @@ services:
     # deskcommcrm-worker:local .`). Em compose comum, `image:` é ignorado a
     # favor do `build:` acima quando a imagem ainda não existe localmente.
     image: ${WORKER_IMAGE:-deskcommcrm-worker:local}
-    # `pull_policy` fica fora — ver comentário equivalente no serviço `app`.
+    # pull_policy:never removido daqui pelo mesmo motivo do app (Swarm rejeita
+    # a chave) — stack_up() já exclui 'worker' do `docker compose pull`
+    # explícito, então ele nunca tenta puxar essa tag local-only de registro.
     restart: unless-stopped
+    # ${ENV_FILE:-.env}: `docker stack deploy` (Swarm) não remove as aspas
+    # simples que o install.sh grava em cada valor do .env (diferente do
+    # `docker compose`, que remove) — os containers receberiam "'valor'"
+    # literal. stack_up() (_common.sh) gera um .env.stack sem aspas e aponta
+    # ENV_FILE pra ele só nesse caminho; compose comum usa .env de sempre.
     env_file: ${ENV_FILE:-.env}
     environment:
       # dentro da rede do compose, o WAHA é o serviço 'waha' na porta interna 3000
@@ -206,7 +218,11 @@ volumes:
 
 networks:
   internal:
-    driver: bridge
+    # Swarm só aceita redes de escopo overlay pra serviços ("cannot be used
+    # with services, only overlay-scoped networks"). stack_up() (_common.sh)
+    # exporta INTERNAL_NETWORK_DRIVER=overlay antes do `docker stack deploy`;
+    # em compose comum (sem Swarm) fica bridge, de sempre.
+    driver: ${INTERNAL_NETWORK_DRIVER:-bridge}
   # Rede overlay do Traefik já existente na VPS (Docker Swarm). Só é usada na
   # variante ORION — ver PATCH-ORION.md. Precisa já existir no host (é criada
   # pelo próprio Traefik/SetupOrion, não por este stack).

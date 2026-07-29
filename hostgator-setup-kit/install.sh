@@ -1052,7 +1052,9 @@ umask 077
   envq APP_IMAGE "$APP_IMAGE"
   envq APP_PULL_POLICY "always"
   envq DOMAIN "$DOMAIN"
-  envq ACME_EMAIL "$ACME_EMAIL"
+  # Opcional: quando esta VPS já tem Traefik/Swarm (variante ORION), quem emite
+  # o SSL é o Traefik já existente, com o e-mail dele próprio.
+  envq ACME_EMAIL "${ACME_EMAIL:-}"
   printf '# Proxy reverso: "caddy" (o kit sobe o dele nas portas 80/443) ou "traefik"\n'
   printf '# (o VPS já tem um Traefik nessas portas — Hostinger, Coolify, Dokploy...).\n'
   printf '# Em "traefik" entra o docker-compose.traefik.yml, que desliga o Caddy e\n'

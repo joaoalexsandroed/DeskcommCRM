@@ -284,6 +284,25 @@ swarm_container() {
   docker ps -q -f "label=com.docker.swarm.service.name=${STACK_NAME}_$1" -f "status=running" | head -1
 }
 
+# Gera uma cópia do .env SEM as aspas simples que envq() (install.sh) grava
+# em cada valor — `docker stack deploy` não remove essas aspas ao carregar
+# via env_file (diferente do `docker compose`), então o container receberia
+# "'valor'" literal. Reaproveita a mesma lógica de-quoting do load_env().
+write_stack_envfile() {
+  local src="${1:-.env}" dst="${2:-.env.stack}" line key val
+  : > "$dst"; chmod 600 "$dst"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) printf '%s\n' "$line" >> "$dst"; continue;; esac
+    case "$line" in *=*) ;; *) printf '%s\n' "$line" >> "$dst"; continue;; esac
+    key="${line%%=*}"; val="${line#*=}"
+    case "$val" in
+      \"*\") val="${val:1:${#val}-2}";;
+      \'*\') val="${val:1:${#val}-2}";;
+    esac
+    printf '%s=%s\n' "$key" "$val" >> "$dst"
+  done < "$src"
+}
+
 # Builda a imagem do worker (Swarm nunca builda — precisa existir local antes
 # do `docker stack deploy`) e sobe/atualiza a stack inteira. Em VPS sem
 # Traefik/JANet, faz o `docker compose up -d` de sempre (o `build:` do worker
@@ -292,11 +311,21 @@ stack_up() {
   if is_orion_vps; then
     step "Buildando a imagem do worker (Swarm não builda — ver PATCH-ORION.md)"
     docker build -f Dockerfile.worker -t "${WORKER_IMAGE:-deskcommcrm-worker:local}" "$PROJECT_DIR"
-    # worker tem pull_policy:never — o pull abaixo pula ele e traz só o resto.
-    # Swarm não suporta proxy externo via override (não builda, stack própria já
-    # tem Traefik pelas labels do próprio compose) — `dc` aqui seria incorreto.
-    docker compose -f "$COMPOSE" pull
-    docker stack deploy -c "$COMPOSE" "$STACK_NAME"
+    # 'worker' fica de fora: a imagem é local-only (nunca foi a nenhum
+    # registro), puxar ela daria erro. Os outros têm imagem pública normal.
+    docker compose -f "$COMPOSE" pull app waha redis srh scheduler
+    # `docker stack deploy` NÃO lê .env sozinho pra resolver ${VAR} no YAML
+    # (diferente do `docker compose`) — exporta pro shell antes de deployar.
+    set -a; . ./.env; set +a
+    # env_file do container: gera versão sem aspas (ver write_stack_envfile).
+    write_stack_envfile .env .env.stack
+    export ENV_FILE=.env.stack
+    # Swarm só aceita rede overlay pra serviço (a 'internal' do compose vanilla
+    # é bridge) — ver comentário em docker-compose.prod.yml.
+    export INTERNAL_NETWORK_DRIVER=overlay
+    # --resolve-image never: não deixa o Swarm tentar resolver/checar a tag do
+    # worker contra um registro (ela só existe local) — usa o que já tem aqui.
+    docker stack deploy --resolve-image never -c "$COMPOSE" "$STACK_NAME"
   else
     # `dc`, não `docker compose -f "$COMPOSE"` cru: preserva o override
     # REVERSE_PROXY=traefik (docker-compose.traefik.yml) fora do modo Swarm.

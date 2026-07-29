@@ -889,6 +889,13 @@ FIELDS=(
   "APP_NAME|Nome que aparece na interface (Enter para o padrão)|DeskcommCRM|||"
 )
 
+# Nesta VPS (variante ORION) quem emite o SSL é o Traefik já existente, com o
+# e-mail dele próprio — o ACME_EMAIL daqui não é usado. Vira opcional pra não
+# confundir quem estiver instalando (ver PATCH-ORION.md).
+if is_orion_vps; then
+  FIELDS[1]="ACME_EMAIL|Seu e-mail (não usado nesta VPS — o Traefik já existente cuida do SSL; Enter pula)||v_email||opcional"
+fi
+
 field_at() { IFS='|' read -r F_VAR F_PROMPT F_DEF F_VAL F_SEC F_OPT <<< "${FIELDS[$1]}"; }
 
 if [ "$NONINTERACTIVE" = 0 ]; then
@@ -1267,9 +1274,15 @@ SQL
 
 # ── 9. Sobe a stack ─────────────────────────────────────────────────────────
 fase 4 "Colocando o CRM no ar"
-step "Puxando a imagem e subindo os serviços"
-dc pull
-dc up -d
+# Detecta sozinho se esta VPS já tem Traefik/Swarm (variante ORION — ver
+# PATCH-ORION.md): nesse caso builda o worker e sobe via `docker stack
+# deploy` na rede JANet; senão, `docker compose up -d` de sempre.
+if is_orion_vps; then
+  step "Rede JANet encontrada — subindo via Docker Stack (Traefik já existente nesta VPS)"
+else
+  step "Puxando a imagem e subindo os serviços"
+fi
+stack_up
 c_grn "✓ containers no ar"
 
 # ── 10. Healthcheck ─────────────────────────────────────────────────────────
@@ -1279,6 +1292,8 @@ step "Aguardando o app ficar saudável"
 # "Instalação concluída!" saía logo atrás, incondicionalmente. Um falso verde
 # no exato momento em que a pessoa decide se confia no produto. Agora o critério
 # é o mesmo do update.sh: a rota /api/v1/health responder "status":"ok".
+# wait_app_healthy já é Swarm-aware por baixo (usa app_exec/app_health_probe
+# em _common.sh, que resolvem o container certo em qualquer variante).
 if health_body="$(wait_app_healthy 30 3)"; then
   APP_SAUDAVEL=1
   c_grn "✓ app no ar e saudável"
@@ -1368,8 +1383,25 @@ $(c_grn "  ─── A comunidade ───────────────�
 
   Telemetria: por padrão os erros desta instalação são enviados ao Sentry do
   projeto, o que ajuda a corrigir falhas que afetam todo mundo. Para desligar,
-  ponha SENTRY_DSN='off' no .env e rode: docker compose $(dc_files) up -d
+  ponha SENTRY_DSN='off' no .env e rode o comando de "reiniciar" abaixo.
 
+DONE
+
+if is_orion_vps; then
+  cat <<DONE
+  Comandos úteis (variante ORION — Traefik/Swarm já existente nesta VPS):
+    ver logs:      docker service logs -f ${STACK_NAME}_app
+    reiniciar:     docker service update --force ${STACK_NAME}_app
+    atualizar:     bash hostgator-setup-kit/update.sh
+    backup:        bash hostgator-setup-kit/backup.sh
+    trocar config: bash hostgator-setup-kit/install.sh
+                   (mostra tudo o que você respondeu e deixa corrigir por número)
+    recomeçar:     docker stack rm ${STACK_NAME} && rm -f .env
+                   (derruba tudo; depois rode o install.sh de novo)
+
+DONE
+else
+  cat <<DONE
   Comandos úteis:
     ver logs:      docker compose $(dc_files) logs -f app
     reiniciar:     docker compose $(dc_files) restart
@@ -1381,3 +1413,4 @@ $(c_grn "  ─── A comunidade ───────────────�
                    (derruba tudo; depois rode o install.sh de novo)
 
 DONE
+fi

@@ -161,47 +161,58 @@ set_env_var .env APP_IMAGE "$APP_IMAGE"
 # (porque a imagem de volta é um ID local, que não se puxa do registro), e
 # ninguém desfazia isso — o `up -d` manual do dono parava de puxar imagem para
 # sempre. Aqui o alvo é uma tag do registro de novo, então "always" volta a ser
-# o certo.
+# o certo. Sem efeito em Swarm (a chave não existe no compose nessa variante —
+# ver docker-compose.prod.yml — mas gravar no .env não faz mal).
 set_env_var .env APP_PULL_POLICY always
-dc pull
-# A rede do proxy externo é declarada como EXTERNA no compose: se ela sumiu
-# (um `docker network prune`, ou o `down -v` que o próprio kit ensina como
-# caminho de recomeço), o `up -d` abaixo morre em "network X declared as
-# external, but could not be found" — e este script roda sozinho pelo agent.sh,
-# então ninguém está lendo a tela para decifrar isso. Mesma função do install.sh.
-garantir_rede_do_proxy
-dc up -d
 
-# O Caddyfile entra no container por bind mount de UM ARQUIVO, e bind mount de
-# arquivo fica preso ao inode. O `git pull` não edita o arquivo: escreve outro e
-# renomeia, gerando inode novo — o container continua lendo o antigo, para
-# sempre. Medido nesta VPS: host inode 3283869, container 3271833, com o
-# conteúdo velho lá dentro.
-#
-# Sem este force-recreate, TODA mudança de proxy enviada numa atualização
-# (inclusive correção de segurança na borda) some em silêncio: o update diz
-# "concluída" e a configuração antiga segue valendo.
-#
-# Com proxy externo não há Caddy para recriar — e não basta o profile inativo
-# do override: nomear o serviço explicitamente (`up -d ... caddy`) ATIVA o
-# profile dele no Compose e sobe o contêiner assim mesmo, indo bater de frente
-# com o Traefik nas portas 80/443. O resultado era um "⚠ não consegui recriar o
-# proxy" em TODA atualização de quem usa proxy externo: alarme falso, num
-# momento em que o dono precisa confiar no que está lendo.
-if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
-  c_grn "✓ proxy externo (Traefik): o Caddy não é usado aqui — nada a recarregar"
+if is_orion_vps; then
+  stack_up
 else
-  dc up -d --force-recreate --no-deps caddy >/dev/null 2>&1 \
-    && c_grn "✓ proxy recarregado com a configuração desta versão" \
-    || c_ylw "⚠ não consegui recriar o proxy — rode: docker compose $(dc_files) up -d --force-recreate caddy"
+  dc pull
+  # A rede do proxy externo é declarada como EXTERNA no compose: se ela sumiu
+  # (um `docker network prune`, ou o `down -v` que o próprio kit ensina como
+  # caminho de recomeço), o `up -d` abaixo morre em "network X declared as
+  # external, but could not be found" — e este script roda sozinho pelo agent.sh,
+  # então ninguém está lendo a tela para decifrar isso. Mesma função do install.sh.
+  garantir_rede_do_proxy
+  dc up -d
+
+  # O Caddyfile entra no container por bind mount de UM ARQUIVO, e bind mount de
+  # arquivo fica preso ao inode. O `git pull` não edita o arquivo: escreve outro e
+  # renomeia, gerando inode novo — o container continua lendo o antigo, para
+  # sempre. Medido nesta VPS: host inode 3283869, container 3271833, com o
+  # conteúdo velho lá dentro.
+  #
+  # Sem este force-recreate, TODA mudança de proxy enviada numa atualização
+  # (inclusive correção de segurança na borda) some em silêncio: o update diz
+  # "concluída" e a configuração antiga segue valendo.
+  #
+  # Com proxy externo não há Caddy para recriar — e não basta o profile inativo
+  # do override: nomear o serviço explicitamente (`up -d ... caddy`) ATIVA o
+  # profile dele no Compose e sobe o contêiner assim mesmo, indo bater de frente
+  # com o Traefik nas portas 80/443. O resultado era um "⚠ não consegui recriar o
+  # proxy" em TODA atualização de quem usa proxy externo: alarme falso, num
+  # momento em que o dono precisa confiar no que está lendo.
+  if [ "${REVERSE_PROXY:-caddy}" = "traefik" ]; then
+    c_grn "✓ proxy externo (Traefik): o Caddy não é usado aqui — nada a recarregar"
+  else
+    dc up -d --force-recreate --no-deps caddy >/dev/null 2>&1 \
+      && c_grn "✓ proxy recarregado com a configuração desta versão" \
+      || c_ylw "⚠ não consegui recriar o proxy — rode: docker compose $(dc_files) up -d --force-recreate caddy"
+  fi
 fi
 
 # ── 6. O app voltou no ar? ───────────────────────────────────────────────────
 step "Conferindo se o app voltou no ar"
 ok=""
+# wait_app_healthy já é Swarm-aware por baixo (app_exec/app_health_probe em
+# _common.sh resolvem o container certo em qualquer variante).
 wait_app_healthy 20 3 >/dev/null && ok=1
 if [ -n "$ok" ]; then
   c_grn "✓ Atualização concluída — app no ar e saudável."
+elif is_orion_vps; then
+  c_ylw "⚠ Atualizei, mas o app ainda não respondeu 'ok'. Veja os logs:"
+  c_ylw "  docker service logs --tail=50 ${STACK_NAME}_app"
 else
   c_ylw "⚠ Atualizei, mas o app não respondeu 'ok'. Veja os logs:"
   c_ylw "  docker compose $(dc_files) logs --tail=50 app"

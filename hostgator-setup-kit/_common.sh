@@ -4,6 +4,10 @@ set -euo pipefail
 
 COMPOSE="docker-compose.prod.yml"
 COMPOSE_TRAEFIK="docker-compose.traefik.yml"
+# Nome do stack quando a VPS já tem Docker Swarm + Traefik rodando (variante
+# ORION — ver PATCH-ORION.md). Nesse caso `docker stack deploy` é quem sobe o
+# docker-compose.prod.yml, não `docker compose up`.
+STACK_NAME="${STACK_NAME:-deskcommcrm}"
 
 # Proxy reverso desta instalação. Vem do .env (load_env), com default 'caddy' —
 # ou seja, toda instalação que já existe continua exatamente como está.
@@ -264,6 +268,53 @@ load_env() {
     printf -v "$key" '%s' "$val"
     export "${key?}"
   done < "$file"
+}
+
+# Detecta a variante ORION: a rede overlay `JANet` do Traefik já existente na
+# VPS (ver PATCH-ORION.md). Se existir, esta stack sobe/atualiza via
+# `docker stack deploy` (Swarm); senão, cai no `docker compose up` de sempre
+# — mesmo kit funciona nas duas VPS, sem flag manual pra lembrar.
+is_orion_vps() {
+  docker network inspect JANet >/dev/null 2>&1
+}
+
+# Container em execução do serviço <nome> dentro do stack Swarm (variante
+# ORION). Vazio se não achar (stack ainda não subiu, ou não é variante ORION).
+swarm_container() {
+  docker ps -q -f "label=com.docker.swarm.service.name=${STACK_NAME}_$1" -f "status=running" | head -1
+}
+
+# Builda a imagem do worker (Swarm nunca builda — precisa existir local antes
+# do `docker stack deploy`) e sobe/atualiza a stack inteira. Em VPS sem
+# Traefik/JANet, faz o `docker compose up -d` de sempre (o `build:` do worker
+# builda sozinho nesse caminho).
+stack_up() {
+  if is_orion_vps; then
+    step "Buildando a imagem do worker (Swarm não builda — ver PATCH-ORION.md)"
+    docker build -f Dockerfile.worker -t "${WORKER_IMAGE:-deskcommcrm-worker:local}" "$PROJECT_DIR"
+    # worker tem pull_policy:never — o pull abaixo pula ele e traz só o resto.
+    # Swarm não suporta proxy externo via override (não builda, stack própria já
+    # tem Traefik pelas labels do próprio compose) — `dc` aqui seria incorreto.
+    docker compose -f "$COMPOSE" pull
+    docker stack deploy -c "$COMPOSE" "$STACK_NAME"
+  else
+    # `dc`, não `docker compose -f "$COMPOSE"` cru: preserva o override
+    # REVERSE_PROXY=traefik (docker-compose.traefik.yml) fora do modo Swarm.
+    dc pull
+    dc up -d
+  fi
+}
+
+# Roda um comando dentro do container do app, na variante que estiver ativa
+# nesta VPS (Swarm ou compose comum). Uso: app_exec node -e "..."
+app_exec() {
+  if is_orion_vps; then
+    local cid; cid="$(swarm_container app)"
+    [ -n "$cid" ] || return 1
+    docker exec -i "$cid" "$@"
+  else
+    dc exec -T app "$@"
+  fi
 }
 
 # Vai pro diretório do projeto (onde está o compose) e carrega o .env.

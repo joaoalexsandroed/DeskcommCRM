@@ -18,9 +18,10 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   google: "Google",
+  openrouter: "OpenRouter",
 };
 
-const PROVIDER_ORDER: Provider[] = ["anthropic", "openai", "google"];
+const PROVIDER_ORDER: Provider[] = ["anthropic", "openai", "google", "openrouter"];
 
 export function CredentialsList({ initialData, canWrite, usageMap }: Props) {
   const { data } = useCredentialsList({ initialData });
@@ -32,6 +33,7 @@ export function CredentialsList({ initialData, canWrite, usageMap }: Props) {
     anthropic: [],
     openai: [],
     google: [],
+    openrouter: [],
   };
   for (const c of credentials) {
     grouped[c.provider]?.push(c);
@@ -44,7 +46,8 @@ export function CredentialsList({ initialData, canWrite, usageMap }: Props) {
           <h2 className="font-medium">Nenhuma chave cadastrada ainda</h2>
           <p className="max-w-md text-sm text-muted-foreground">
             Seus agentes só conseguem pensar depois que você cola aqui uma chave da
-            Anthropic, da OpenAI ou do Google. A cobrança vai direto para a sua conta
+            Anthropic, da OpenAI, do Google ou do OpenRouter (300+ modelos de outros
+            vendors atrás de uma chave só). A cobrança vai direto para a sua conta
             no provedor, e a chave fica guardada criptografada.
           </p>
           {canWrite && (

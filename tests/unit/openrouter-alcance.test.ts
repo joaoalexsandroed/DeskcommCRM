@@ -1,6 +1,6 @@
 /**
- * Invariante de ALCANCE: o que a `OPENROUTER_API_KEY` roteia — e o que ela não
- * roteia.
+ * Invariante de ALCANCE: o que a `OPENROUTER_API_KEY` (env) roteia — e o que
+ * ela não roteia.
  *
  * Por que este arquivo existe: o `.env.example` afirma ao self-hoster quais
  * caminhos passam a usar a OpenRouter quando ele preenche a chave. Afirmação em
@@ -10,17 +10,17 @@
  *
  * O alcance real hoje, medido: `resolveLanguageModel()` é chamado por
  * `ai-sentiment-worker` (classificação de sentimento) e `ai-response-worker`
- * (bot de resposta). NENHUM dos dois passa `tools` ao SDK. O agente do CRM, que
- * opera por ferramentas, roda por outro caminho — `lib/agent-engine/edge/llm/
- * providers.ts` (credencial BYOK por organização) e `buildModel()` em
- * `lib/ai/runtime/agent.ts` —, e nenhum deles conhece a OpenRouter.
+ * (bot de resposta). NENHUM dos dois passa `tools` ao SDK — o alcance da
+ * variável de AMBIENTE `OPENROUTER_API_KEY` fica restrito a esses dois.
  *
- * Isso importa porque muda QUAL risco o usuário corre. Um modelo sem tool
- * calling sólido é catastrófico num turno com ferramentas (responde texto
- * plausível e nunca cria o lead nem move o card) e é inofensivo numa
- * classificação de sentimento. Enquanto a OpenRouter não alcançar o primeiro
- * grupo, o aviso não deve assustar com ele; no dia em que alcançar, o aviso
- * PRECISA assustar — e este teste é quem obriga a decidir isso conscientemente.
+ * Decisão de produto (branch `vps-orion`, diverge do upstream): o agente do
+ * CRM, que opera por ferramentas, aceita OpenRouter como provider — via
+ * credencial BYOK cadastrada por organização (tela de Agentes), não via esta
+ * variável de ambiente. `lib/agent-engine/edge/llm/providers.ts` CONHECE a
+ * OpenRouter de propósito. Quem escolhe OpenRouter para o agente na tela
+ * aceita conscientemente o risco descrito no `.env.example`: modelo sem tool
+ * calling sólido não dá erro, responde texto plausível e nunca cria o lead
+ * nem move o card. Ver PATCH-ORION.md.
  */
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -58,18 +58,13 @@ describe("alcance da OPENROUTER_API_KEY", () => {
     expect(
       comFerramentas,
       comFerramentas.length
-        ? `${comFerramentas.join(", ")} passa(m) ferramentas ao modelo E resolve(m) pela OpenRouter. ` +
-            "O aviso sobre tool calling em .env.example / .env.hostgator.example foi escrito quando " +
-            "isso NÃO acontecia e agora está desatualizado: reescreva-o antes de liberar este caminho."
+        ? `${comFerramentas.join(", ")} passa(m) ferramentas ao modelo E resolve(m) pela OpenRouter ` +
+            "via `resolveLanguageModel()` (env `OPENROUTER_API_KEY`). O aviso sobre tool calling em " +
+            ".env.example / .env.hostgator.example foi escrito quando isso NÃO acontecia por essa via " +
+            "e agora está desatualizado: reescreva-o antes de liberar este caminho. (O agente do CRM " +
+            "aceitar OpenRouter por credencial BYOK — lib/agent-engine/edge/llm/providers.ts — é " +
+            "decisão de produto separada, coberta por outro aviso; ver o cabeçalho deste arquivo.)"
         : undefined,
     ).toEqual([]);
-  });
-
-  it("o agente com ferramentas continua fora do alcance da OpenRouter", () => {
-    // Os dois runtimes que passam `tools` montam o modelo por conta própria.
-    // Se um deles passar a conhecer a OpenRouter, o aviso muda de natureza.
-    for (const arquivo of ["lib/agent-engine/edge/llm/providers.ts", "lib/ai/runtime/agent.ts"]) {
-      expect(readFileSync(resolve(RAIZ, arquivo), "utf8").toLowerCase()).not.toContain("openrouter");
-    }
   });
 });

@@ -21,7 +21,7 @@ import { z } from 'zod';
 
 import type { Logger } from '../../obs/logger';
 import { resolveOrgLlmConfig, type LlmEdgeConfig } from './credentials';
-import { costCents } from './pricing';
+import { costCents, openrouterCostCents } from './pricing';
 import { createDefaultRegistry, type ProviderRegistry } from './providers';
 import { buildStablePrefix } from './stable-prefix';
 
@@ -195,7 +195,13 @@ export async function runModelCall(db: pg.Pool, cfg: LlmEdgeConfig, input: RunMo
     cacheReadTokens: result.usage.inputTokenDetails.cacheReadTokens ?? 0,
     cacheWriteTokens: result.usage.inputTokenDetails.cacheWriteTokens ?? 0,
   };
-  const cost = costCents(model, usage);
+  // openrouter não tem tabela de preço (300+ modelos, ver pricing.ts) — o custo
+  // real vem na própria resposta (providerMetadata.openrouter.usage.cost),
+  // pedido via `usage: {include: true}` no factory do provider.
+  const cost =
+    config.provider === 'openrouter'
+      ? openrouterCostCents(result.providerMetadata)
+      : costCents(model, usage);
 
   const { rows } = await db.query<{ id: string }>(
     `insert into llm_calls

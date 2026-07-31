@@ -9,7 +9,7 @@
  * Timeout 5s, sem retry. Erros 401 são distintos de erros de rede.
  */
 
-export type Provider = "anthropic" | "openai" | "google";
+export type Provider = "anthropic" | "openai" | "google" | "openrouter";
 
 export interface ValidationOk {
   ok: true;
@@ -103,6 +103,41 @@ export async function validateGoogleKey(apiKey: string): Promise<ValidationResul
   }
 }
 
+/**
+ * OpenRouter não tem um endpoint de "listar modelos autenticado" que também
+ * valide a chave: `/api/v1/models` é público (200 mesmo com chave inválida) e
+ * `/api/v1/auth/key` valida a chave mas não devolve catálogo. Por isso são DUAS
+ * chamadas — a 1ª só confirma 401/403, a 2ª busca o catálogo pra popular
+ * `models_available` do mesmo jeito que os outros 3 providers.
+ */
+export async function validateOpenRouterKey(apiKey: string): Promise<ValidationResult> {
+  try {
+    const authRes = await timedFetch("https://openrouter.ai/api/v1/auth/key", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (authRes.status === 401 || authRes.status === 403) {
+      return { ok: false, error: "auth_failed_401" };
+    }
+    if (!authRes.ok) {
+      return { ok: false, error: `provider_status_${authRes.status}` };
+    }
+
+    const modelsRes = await timedFetch("https://openrouter.ai/api/v1/models", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!modelsRes.ok) {
+      return { ok: false, error: `provider_status_${modelsRes.status}` };
+    }
+    const json = (await modelsRes.json()) as { data?: { id: string }[] };
+    const models = (json.data ?? []).map((m) => m.id).filter(Boolean);
+    return { ok: true, models };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.name : "network_error" };
+  }
+}
+
 export function validateProviderKey(
   provider: Provider,
   apiKey: string,
@@ -114,6 +149,8 @@ export function validateProviderKey(
       return validateOpenAIKey(apiKey);
     case "google":
       return validateGoogleKey(apiKey);
+    case "openrouter":
+      return validateOpenRouterKey(apiKey);
     default: {
       const exhaustive: never = provider;
       return Promise.resolve({ ok: false, error: `unknown_provider:${exhaustive}` });

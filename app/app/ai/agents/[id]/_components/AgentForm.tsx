@@ -469,6 +469,7 @@ export function AgentForm(props: Props) {
                   <SelectItem value="anthropic">Anthropic</SelectItem>
                   <SelectItem value="openai">OpenAI</SelectItem>
                   <SelectItem value="google">Google (Gemini)</SelectItem>
+                  <SelectItem value="openrouter">OpenRouter</SelectItem>
                 </SelectContent>
               </Select>
             </div>

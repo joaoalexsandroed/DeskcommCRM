@@ -85,6 +85,22 @@ const PARES: Array<{
     simbolo: "LeadStatus",
   },
   {
+    tabela: "ai_invocations",
+    coluna: "invocation_kind",
+    // lib/ai/log-invocation.ts → InvocationKind.
+    //
+    // Par nascido de divergência REAL, achada junto com a issue #160: o tipo
+    // oferecia quatro valores que o CHECK recusa (`sentiment_check`,
+    // `embed_chunk`, `embed_query`, `intent_classify`) e omitia dois que ele
+    // aceita (`triage_classify`, `embedding_generate`). Nenhum estava em uso,
+    // então não havia sintoma — o defeito era uma armadilha carregada: o insert
+    // é fire-and-forget, então quem escolhesse um deles pelo autocomplete
+    // colheria um `23514` que nunca chega à tela de ninguém. É o mesmo modo de
+    // falha que deixou esta tabela VAZIA numa VPS com tráfego real.
+    arquivo: "lib/ai/log-invocation.ts",
+    simbolo: "InvocationKind",
+  },
+  {
     tabela: "agent_inbox_items",
     coluna: "kind",
     // lib/agent-engine/db/repository.ts → InboxKind.

@@ -334,7 +334,7 @@ stack_up() {
     # build próprio do app (fork com features fora do release oficial, ex.:
     # esta VPS) não tem de onde puxar; o padrão do kit (imagem do ghcr.io,
     # ainda não baixada na 1ª instalação) segue pulled normalmente.
-    local app_img="${APP_IMAGE:-ghcr.io/melgarafael/deskcommcrm:latest}" pull_alvo="waha redis srh scheduler"
+    local app_img="${APP_IMAGE:-ghcr.io/$(ghcr_owner_repo):latest}" pull_alvo="waha redis srh scheduler"
     docker image inspect "$app_img" >/dev/null 2>&1 || pull_alvo="app $pull_alvo"
     docker compose -f "$COMPOSE" pull $pull_alvo
     # `docker stack deploy` NÃO lê .env sozinho pra resolver ${VAR} no YAML

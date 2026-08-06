@@ -34,6 +34,7 @@ import {
   desligarPacote,
   estadoDoPacote,
   ligarPacote,
+  vagasExigidasPeloPacote,
   textoDaContagem,
   vagasRestantes,
   type CapacidadeSelecionavel,
@@ -168,7 +169,12 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
   function alternarPacote(pacote: ToolBundle, ligar: boolean) {
     if (ligar) {
       const proximo = ligarPacote(value, catalogo, pacote);
-      const excedente = proximo.length - TETO_TOOLS_POR_AGENTE;
+      // O excedente conta as CRÍTICAS do pacote junto (issue #162): ligar o
+      // pacote e deixar a crítica dele sem vaga é prometer uma escolha que o
+      // produto não permite fazer — o checkbox nasce desabilitado, sem dizer
+      // por quê. Ou cabe inteiro, com a vaga da crítica guardada, ou não liga
+      // e a tela diz quantas faltam.
+      const excedente = vagasExigidasPeloPacote(value, catalogo, pacote) - TETO_TOOLS_POR_AGENTE;
       aplicar(
         proximo,
         `Ligar este pacote passaria de ${TETO_TOOLS_POR_AGENTE} capacidades (faltam ${excedente} ${

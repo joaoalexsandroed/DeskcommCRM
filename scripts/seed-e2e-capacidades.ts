@@ -100,6 +100,27 @@ async function main(): Promise<void> {
 
   const TOOLS_LIGADAS = ["crm_get_lead", "crm_move_lead_stage", "crm_list_leads"];
 
+  // REPÕE TODAS AS VERSÕES DRAFT DESTE AGENTE, não só a de maior número.
+  //
+  // A tela SALVA criando draft novo. Depois de uma rodada do e2e o agente fica
+  // com vários drafts, e o seed — que buscava só o de `version_number` mais
+  // alto — repunha um enquanto a tela editava outro. Resultado: a segunda
+  // execução media o resto da primeira. Foi assim que a jornada do teto (issue
+  // #162) apareceu passando num banco onde o pacote já estava ligado de antes:
+  // as 3 capacidades do cenário eram na verdade 17.
+  {
+    const { error } = await admin
+      .from("ai_agent_versions")
+      .update({
+        tool_ids: TOOLS_LIGADAS,
+        created_at: new Date(Date.now() - 60 * 86_400_000).toISOString(),
+      })
+      .eq("organization_id", orgId)
+      .eq("agent_id", agentId)
+      .eq("status", "draft");
+    if (error) throw error;
+  }
+
   let versionId = versaoExistente?.id as string | undefined;
   if (versionId) {
     // Repõe o estado conhecido. O E2E mexe na configuração pela tela (é o que

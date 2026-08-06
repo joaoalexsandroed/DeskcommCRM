@@ -200,7 +200,7 @@ jobs:
             qa-agente-usa-as-maos.spec.ts qa-selo-no-funil-usado.spec.ts \
             qa-telas-descobertas-w4.spec.ts retorno-anti-morte.spec.ts \
             followup-builder.spec.ts followup-queue.spec.ts \
-            distribuicao-atendimento.spec.ts
+            distribuicao-atendimento.spec.ts followup-journey.spec.ts
         env:
           INTERNAL_SECRET: ci-placeholder-nao-e-segredo
           CPF_ENCRYPTION_KEY: ci-placeholder-nao-e-segredo
@@ -222,7 +222,7 @@ jobs:
           {
             echo "## E2E — cobertura deste job"
             echo ""
-            echo "**Rodou (29 de 33 specs):** smoke, auth, error-pages, password-recovery,"
+            echo "**Rodou (30 de 33 specs):** smoke, auth, error-pages, password-recovery,"
             echo "signup-journey, rbac-roles, inbox-scope, reset-password-mfa,"
             echo "degradacao-silenciosa, vps-webhook-outbound-ssrf, kanban-owner-filter,"
             echo "queue-assign, risk-radar, invite-lifecycle, system-update,"
@@ -230,10 +230,14 @@ jobs:
             echo "escalacao-ciclo, navegacao, olhar-telas-do-epico, pipelines-gestao,"
             echo "qa-agente-usa-as-maos, qa-selo-no-funil-usado, qa-telas-descobertas-w4,"
             echo "retorno-anti-morte, followup-builder, followup-queue,"
-            echo "distribuicao-atendimento."
+            echo "distribuicao-atendimento, followup-journey."
             echo ""
-            echo "**Não rodou (4):**"
-            echo "- precisa de WAHA: followup-journey, webhooks"
+            echo "**Não rodou (3):**"
+            echo "- webhooks: a automação não aplica a tag no card do lead neste"
+            echo "  ambiente — reproduzido localmente, ainda sem causa. NÃO é falta"
+            echo "  de WAHA: a followup-journey estava na mesma categoria e passa"
+            echo "  sem WAHA nenhum (ela dubla o webhook chamando a mesma função"
+            echo "  que o receiver real chama)."
             echo "- precisa de WAHA + Redis + Resend + Nuvemshop: vps-fresh-onboarding (P0)"
             echo "- **capacidades-do-agente: fora porque REPROVA, e o vermelho está certo.**"
             echo "  Ligar o pacote 'Atender' enche o teto de 20 capacidades, e aí a UI"

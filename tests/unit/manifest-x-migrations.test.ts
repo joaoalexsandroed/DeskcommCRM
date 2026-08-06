@@ -146,9 +146,13 @@ describe("MANIFEST × arquivos de migration", () => {
     const duplicados = [...porNumero.entries()]
       .filter(([, fs]) => fs.length > 1)
       .map(([num, fs]) => `${num}: ${fs.join(", ")}`);
-    // A 0068 nasceu duplicada muito antes desta catraca e as duas foram
-    // aplicadas — declarada, não escondida.
-    expect(duplicados.filter((d) => !d.startsWith("0068:"))).toEqual([]);
+    // A exceção da 0068 saiu daqui em 2026-08-06: a colisão foi CONSERTADA
+    // (`0068_ai_pricing_backfill` → `0110_...`), não perdoada. Sem exceção nenhuma
+    // agora — número repetido reprova, ponto. Se voltar a aparecer dívida aqui, o
+    // caminho é renumerar como se fez, não readicionar filtro: o timestamp é a
+    // identidade que o Supabase usa, então renumerar o NNNN é barato e não
+    // re-aplica nada em quem já rodou.
+    expect(duplicados).toEqual([]);
   });
 
   // Regra SEPARADA da de número, e não um detalhe dela: número repetido quebra a

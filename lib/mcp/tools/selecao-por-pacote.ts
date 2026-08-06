@@ -120,6 +120,41 @@ export function desligarPacote(
   return selecionadas.filter((n) => !aRemover.has(n) || sobrevivem.has(n));
 }
 
+/**
+ * Quantas vagas ligar este pacote REALMENTE exige — contando as críticas dele.
+ *
+ * ## Por que as críticas entram na conta (issue #162)
+ *
+ * O contrato do pacote é "eu ligo as seguras e DEIXO as críticas para você
+ * marcar à mão" — a tela diz isso com todas as letras ("o pacote não liga por
+ * você"). Se as automáticas do pacote encostam no teto, a crítica que ele
+ * deliberadamente deixou de fora fica com o checkbox **desabilitado**: o pacote
+ * prometeu uma escolha que o produto não permite fazer.
+ *
+ * Medido em 2026-08-06, catálogo de 51 capacidades, teto 20:
+ *
+ *   atender    17 automáticas + 1 crítica = 18
+ *   organizar  14 automáticas + 4 críticas = 18
+ *   escalar    10 automáticas + 2 críticas = 12
+ *
+ * Nenhum estoura sozinho. O que estourava era o pacote SOMADO ao que já estava
+ * ligado: 3 pré-selecionadas + atender = 20 exatas, teto cheio, crítica morta.
+ *
+ * Reservar é o que mantém o contrato de pé: ou o pacote cabe inteiro — com a
+ * vaga da crítica guardada — ou ele não liga, e a tela diz quantas vagas faltam.
+ * A alternativa era ligar e deixar um checkbox morto sem explicação, que é o
+ * defeito que a #162 nomeia.
+ */
+export function vagasExigidasPeloPacote(
+  selecionadas: ReadonlyArray<string>,
+  catalogo: ReadonlyArray<CapacidadeSelecionavel>,
+  pacote: ToolBundle,
+): number {
+  const depois = new Set(ligarPacote(selecionadas, catalogo, pacote));
+  for (const name of capacidadesCriticasDoPacote(catalogo, pacote)) depois.add(name);
+  return depois.size;
+}
+
 export function vagasRestantes(selecionadas: ReadonlyArray<string>): number {
   return TETO_TOOLS_POR_AGENTE - selecionadas.length;
 }

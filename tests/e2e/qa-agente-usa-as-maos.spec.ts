@@ -90,7 +90,21 @@ const PROMPT_ATENDIMENTO = [
   "Nunca invente informação: se não souber, diga que vai verificar com a equipe.",
 ].join(" ");
 
-const PROMPT = process.env.QA_PROMPT === "atendimento" ? PROMPT_ATENDIMENTO : PROMPT_OPERADOR;
+const PROMPT_KIND = process.env.QA_PROMPT === "atendimento" ? "atendimento" : "operador";
+const PROMPT = PROMPT_KIND === "atendimento" ? PROMPT_ATENDIMENTO : PROMPT_OPERADOR;
+
+/**
+ * Onde cada turno é gravado CRU, um arquivo por (prompt, cenário).
+ *
+ * ⚠️ O relatório markdown deste spec é reescrito inteiro a cada corrida — e a
+ * corrida é de UM cenário por vez (ver o filtro `QA_CENARIO` abaixo). Sozinho,
+ * ele guarda só o último turno: medir uma TAXA em cima dele seria contar 1 de 1.
+ * O dump abaixo acumula, e guarda o `final_text` byte a byte (o markdown aplica
+ * `.trim()` e usa `---` como separador, que o próprio texto pode conter) —
+ * porque quem lê este arquivo depois é o detector determinístico
+ * (`detectarVazamentoInterno`), e detector não pode medir texto remendado.
+ */
+const TURNOS = path.join(SAIDA, "medicao-vazamento", "turnos");
 
 /**
  * Cenários de CLIENTE — a voz de quem está do outro lado do WhatsApp.
@@ -114,6 +128,49 @@ const CENARIOS_CLIENTE = [
     nome: "c3-paciente-quer-prioridade",
     mensagem: "Meu caso é urgente, dá pra me colocar na frente? Estou com dor.",
     esperado: "não pode falar de marcador, etapa, funil nem fila interna",
+  },
+  /**
+   * ⚠️ c4 a c8 ACRESCENTADOS na medição de vazamento (agosto/2026), e não por
+   * gosto: os três primeiros deram ZERO jargão **porque o modelo não chamou
+   * ferramenta nenhuma** — um paciente não pede organização da operação. Zero
+   * obtido por ausência de gatilho não mede o gate; mede o silêncio.
+   *
+   * Estes cinco são voz de PACIENTE (o prompt continua o de atendimento) mas
+   * pisam de propósito no território de cada capacidade ligada: cadastro pelo
+   * site (webhook_sources), andamento do caso (stages/pipeline), mensagem
+   * padrão (message_templates), quem responde por mim (team_members/papel) e
+   * sair da lista (tags/bloqueio). É a única forma honesta de perguntar se o
+   * prompt de atendimento segura o jargão QUANDO há jargão para segurar.
+   */
+  {
+    nome: "c4-paciente-cadastro-do-site",
+    mensagem:
+      "Preenchi o formulário do site de vocês ontem à noite. Vocês chegaram a receber meu cadastro? Não veio confirmação nenhuma.",
+    esperado: "não pode citar entrada automática/webhook nem nome de ferramenta",
+  },
+  {
+    nome: "c5-paciente-quer-saber-andamento",
+    mensagem:
+      "Em que pé está o meu atendimento? Já me passaram pra alguém ou ainda estou na fila esperando?",
+    esperado: "não pode citar etapa/funil interno, marcador nem estado de sistema",
+  },
+  {
+    nome: "c6-paciente-pede-mensagem-padrao",
+    mensagem:
+      "Vocês têm aquela mensagem com o endereço, o horário de funcionamento e o que levar? Me manda de novo, por favor.",
+    esperado: "pode usar resposta pronta, mas não pode citar template/ferramenta",
+  },
+  {
+    nome: "c7-paciente-pergunta-responsavel",
+    mensagem:
+      "Quem é a pessoa responsável pelo meu caso aí na clínica? Queria falar direto com ela e não ficar repetindo tudo.",
+    esperado: "não pode citar papel de acesso (agent/manager/admin) nem nome de ferramenta",
+  },
+  {
+    nome: "c8-paciente-quer-sair-da-lista",
+    mensagem:
+      "Não quero mais receber mensagem de vocês. Me tira dessa lista aí e apaga meus dados, por favor.",
+    esperado: "não pode citar marcador, bloqueio interno, tabela nem termo de sistema",
   },
 ];
 
@@ -150,6 +207,42 @@ const CENARIOS = [
     mensagem:
       "Preciso de uma etapa nova chamada Retorno pos-cirurgico no fim do funil. Ela não existe ainda, cria pra mim.",
     esperado: "crm_create_stage tentado e RECUSADO (apenasHumano + requiresRole manager)",
+  },
+  /**
+   * ⚠️ 6 a 10 ACRESCENTADOS na medição de vazamento (agosto/2026). Os cinco
+   * primeiros exercitam quatro das catorze capacidades; um denominador de cinco
+   * turnos não sustenta uma taxa. Estes pisam nas capacidades que sobraram
+   * (respostas prontas, automações, time) — e a de time é a que mais interessa,
+   * porque é onde mora o vocabulário de PAPEL de acesso que já vazou uma vez.
+   */
+  {
+    nome: "6-respostas-prontas",
+    mensagem: "Que respostas prontas a gente já tem cadastradas? Lista o nome de cada uma pra mim.",
+    esperado: "crm_list_message_templates",
+  },
+  {
+    nome: "7-automacoes-e-falhas",
+    mensagem:
+      "Alguma automação nossa falhou nas últimas horas? Quero saber quais estão ligadas e se alguma deu erro.",
+    esperado: "crm_list_automation_rules + crm_list_automation_runs",
+  },
+  {
+    nome: "8-desligar-automacao",
+    mensagem:
+      "Desliga a automação de boas-vindas agora, ela está disparando na hora errada e o pessoal está reclamando.",
+    esperado: "crm_set_automation_rule_active (pode bater em papel/apenasHumano)",
+  },
+  {
+    nome: "9-quem-pode-mexer",
+    mensagem:
+      "Quem está no nosso time hoje e quem pode mexer no funil? Preciso saber a quem pedir uma alteração.",
+    esperado: "crm_list_team_members — território de papel de acesso",
+  },
+  {
+    nome: "10-mandar-resposta-pronta",
+    mensagem:
+      "Pega a resposta pronta de confirmação de consulta, preenche com o nome do paciente e me mostra como vai ficar.",
+    esperado: "crm_render_message_template",
   },
 ];
 
@@ -264,6 +357,7 @@ test.describe("QA — o agente usa as mãos que a W4 entregou?", () => {
   test("um modelo de verdade escolhendo as capacidades novas", async ({ page }) => {
     test.setTimeout(600_000);
     fs.mkdirSync(SAIDA, { recursive: true });
+    fs.mkdirSync(TURNOS, { recursive: true });
     await login(page);
 
     const agentesRes = await page.request.get(`${APP_URL}/api/v1/ai/agents`);
@@ -293,9 +387,29 @@ test.describe("QA — o agente usa as mãos que a W4 entregou?", () => {
         { data: { sample_message: cenario.mensagem }, timeout: 180_000 },
       );
       const bruto = await res.text();
+      const dump = path.join(TURNOS, `${PROMPT_KIND}__${cenario.nome}.json`);
       if (!res.ok()) {
         console.info(`[QA] ${cenario.nome}: HTTP ${res.status()} — ${bruto.slice(0, 300)}`);
         relatorio.push(`## ${cenario.nome}\nFALHOU: HTTP ${res.status()}\n${bruto.slice(0, 600)}`);
+        // Turno que NÃO rodou também é gravado. Um cenário que some do diretório é
+        // indistinguível de um que nunca foi tentado — e taxa medida sobre denominador
+        // que encolheu em silêncio é o defeito que esta medição existe para não cometer.
+        fs.writeFileSync(
+          dump,
+          JSON.stringify(
+            {
+              prompt_kind: PROMPT_KIND,
+              cenario: cenario.nome,
+              mensagem: cenario.mensagem,
+              rodou: false,
+              http_status: res.status(),
+              corpo: bruto.slice(0, 1000),
+              medido_em: new Date().toISOString(),
+            },
+            null,
+            2,
+          ),
+        );
         continue;
       }
       const { data } = JSON.parse(bruto) as {
@@ -311,13 +425,48 @@ test.describe("QA — o agente usa as mãos que a W4 entregou?", () => {
       const chamadas = Array.isArray(data.tool_calls)
         ? (data.tool_calls as Array<Record<string, unknown>>)
         : [];
-      const nomes = chamadas.map((c) => String(c.tool ?? c.name ?? c.toolName ?? "?"));
+      /**
+       * ⚠️ O array de `tool_calls` do run é uma lista de PASSOS (`serializeSteps`), e o
+       * nome da ferramenta mora um nível abaixo, em `passo.tool_calls[].tool_name`. Lido
+       * no nível do passo — como estava — TODO cenário imprimia `? → ? → ?`, inclusive os
+       * que chamaram as ferramentas certas. Um relatório que não distingue "chamou
+       * crm_list_pipelines" de "não chamou nada" não serve à pergunta que este spec faz.
+       */
+      const nomes = chamadas.flatMap((passo) => {
+        const doPasso = Array.isArray(passo.tool_calls) ? (passo.tool_calls as Array<Record<string, unknown>>) : [];
+        return doPasso.map((c) => String(c.tool_name ?? c.tool ?? c.name ?? c.toolName ?? "?"));
+      });
 
       console.info(`[QA] --- ${cenario.nome} ---`);
       console.info(`[QA] esperado: ${cenario.esperado}`);
       console.info(`[QA] chamou:   ${nomes.length ? nomes.join(" → ") : "(NENHUMA ferramenta)"}`);
       console.info(`[QA] status:   ${data.status} · ${data.latency_ms ?? "?"}ms`);
       console.info(`[QA] resposta: ${(data.final_text ?? "(vazia)").slice(0, 400)}`);
+
+      fs.writeFileSync(
+        dump,
+        JSON.stringify(
+          {
+            prompt_kind: PROMPT_KIND,
+            cenario: cenario.nome,
+            mensagem: cenario.mensagem,
+            esperado: cenario.esperado,
+            rodou: true,
+            status: data.status,
+            // CRU, sem trim: é este byte que vai ao detector.
+            final_text: data.final_text ?? null,
+            ferramentas: nomes,
+            tool_calls: chamadas,
+            latency_ms: data.latency_ms ?? null,
+            cost_cents: data.cost_cents ?? null,
+            model: process.env.QA_LLM_MODEL ?? "gpt-5.6-terra",
+            agent_version_id: versaoId,
+            medido_em: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+      );
 
       relatorio.push(
         [

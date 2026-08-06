@@ -29,6 +29,7 @@
  */
 import type pg from 'pg';
 import { z } from 'zod';
+import { auxModelArgs, type AuxModelArgs } from './aux-model-args';
 import type { ChannelAdapter, ChannelSendResult } from '../channel-adapter';
 
 import { withFields, type Logger } from '../obs/logger';
@@ -270,6 +271,14 @@ export const AGENT_TOOL_DEFS = {
     }).passthrough(),
   },
 } as const;
+
+/**
+ * Quantos vetos de `internal_vocabulary_leak` o turno tolera antes de o fail-safe soltar
+ * o envio (ver o bloco em `send_message.execute`). Mesmo degrau do fail-safe de casos
+ * humanos — 1ª vez ensina, a 2ª decide — porque a assimetria é a mesma: uma reescrita
+ * que o modelo não fez não vale um cliente sem resposta.
+ */
+export const MAX_VETOS_DE_VOCABULARIO_INTERNO = 2;
 
 /**
  * Job já saiu de 'running' por decisão do próprio run (ex.: cancelJob no veto
@@ -751,7 +760,13 @@ export async function runAgentTurn(
   // knob de env → modelo do agente PUBLICADO na tela → organizations.settings.llm.
   // Sem isso, self-host que configurou tudo pela tela (que não preenche default_model)
   // morria no primeiro classificador: "modelo LLM não definido".
-  const agentModel = agentConfig?.model;
+  // A regra de ONDE o classificador auxiliar tira modelo + provider + credencial
+  // mora em `aux-model-args.ts`, fora daqui, para poder ser exercitada por unit:
+  // esta função precisa de banco, job e registry para rodar. Ver o defeito que a
+  // originou (PR #151) no cabeçalho de lá.
+  const argsAux = (configuredModel: string | undefined): AuxModelArgs =>
+    auxModelArgs(configuredModel, agentConfig);
+
   const turnContextKnobs =
     agentConfig !== null
       ? { historyLimit: agentConfig.historyMessageWindow, maxTokens: deps.knobs.maxContextTokens }
@@ -858,12 +873,11 @@ export async function runAgentTurn(
       {
         context: openingContext.context,
         previousSummary: previous?.rolling_summary ?? '',
-        knobs: {
-          ...deps.knobs.compaction,
-          ...(deps.knobs.compaction.model === undefined && agentModel !== undefined
-            ? { model: agentModel }
-            : {}),
-        },
+        // A compactação é o QUARTO call site da mesma regra, e o #151 só cobriu
+        // três: ela também pedia o modelo do agente ao provider default da org.
+        // Mesmo 404, mesma morte de turno — só que num caminho que roda quando a
+        // conversa já é longa, ou seja, mais tarde e com menos gente olhando.
+        knobs: { ...deps.knobs.compaction, ...argsAux(deps.knobs.compaction.model) },
         notesIndexMaxTokens: deps.knobs.notesIndexMaxTokens,
       },
       { registry: deps.registry, log: runLog },
@@ -963,9 +977,7 @@ export async function runAgentTurn(
             { tenantId, leadId, jobId: job.id },
             {
               candidate,
-              ...((deps.knobs.promiseSemantic?.model ?? agentModel) !== undefined
-                ? { model: (deps.knobs.promiseSemantic?.model ?? agentModel) as string }
-                : {}),
+              ...argsAux(deps.knobs.promiseSemantic?.model),
             },
             { ...(deps.registry !== undefined ? { registry: deps.registry } : {}), log: runLog },
           )
@@ -978,6 +990,10 @@ export async function runAgentTurn(
   // 1º veto no turno é erro-de-ensino (o modelo re-tenta); persistir uma 2ª vez aciona o
   // auto-abre-caso (ver send_message.execute). Por turno (closure), nunca cross-turno.
   let casePromiseVetoCount = 0;
+  // Contador do fail-safe do gate de vazamento de vocabulário interno
+  // (`internal_vocabulary_leak`): 1º veto no turno ensina o modelo a reescrever; persistir
+  // solta o envio com registro. Por turno (closure), nunca cross-turno.
+  let internalVocabularyVetoCount = 0;
   const outcomes: ChannelSendResult[] = [];
   // Citações acumuladas por buscas de conhecimento DESTE turno — anexadas à
   // próxima outbound enviada (shape de lib/ai/citations/types, que a UI já lê).
@@ -1218,6 +1234,14 @@ export async function runAgentTurn(
             casesEnabled: agentConfig?.casesEnabled ?? false,
             hasOpenCase,
             openedCaseThisTurn,
+            // A rede contra vazamento de vocabulário interno arma AQUI e só aqui: este é
+            // o único corpo escrito pelo MODELO, e o único caminho em que o veto vira
+            // erro instrutivo que ele pode consertar no turno seguinte. O `send_template`
+            // (mais acima) fica desarmado de propósito — o texto lá é do humano e já
+            // aprovado pela Meta; vetá-lo devolveria ao modelo a culpa por uma frase que
+            // não é dele, e a única saída seria o silêncio. O follow-up determinístico
+            // idem (ver GateContext.internalVocabularyEnforced).
+            enforceInternalVocabulary: true,
             ...(deps.knobs.disclosureMode !== undefined ? { disclosureMode: deps.knobs.disclosureMode } : {}),
             // Gate 5 (F4-02): classificador semântico roteado pelo MESMO seam agnóstico (budget
             // da org checado nele). Closure com tenant/lead/job da ROW fechados — nunca do payload.
@@ -1277,6 +1301,36 @@ export async function runAgentTurn(
             // (raro) — pode reaplicar 1 espera de pacing; aceitável pelo caminho ser
             // excepcional.
             chain = await runBeforeSend({ ...beforeSendArgs, hasOpenCase: true, openedCaseThisTurn: true });
+          }
+          if (chain.status === 'vetoed' && chain.code === 'internal_vocabulary_leak') {
+            // Fail-safe do gate de vazamento — O CLIENTE NUNCA FICA SEM RESPOSTA.
+            //
+            // Este gate é REDE, não invariante sagrada (ao contrário do case_promise, cuja
+            // 2ª camada ABRE o caso antes de liberar). Aqui não há o que o sistema possa
+            // fazer no lugar do modelo: ou ele reescreve, ou a escolha é entre uma frase
+            // com um termo técnico e o silêncio. Silêncio é pior — some com o atendimento
+            // sem sintoma, que é o oposto do invariante 4 do sistema vivo. Então: 1º veto
+            // ensina (o modelo re-tenta); persistiu, o envio sai DESARMANDO só este gate —
+            // todos os outros continuam valendo, porque o re-run passa pela cadeia inteira.
+            //
+            // O veto da 1ª tentativa já virou linha em `before_send_traces` (com a
+            // categoria do vazamento) e atividade na timeline: a liberação não apaga a
+            // medição, que é o produto deste gate.
+            internalVocabularyVetoCount += 1;
+            if (internalVocabularyVetoCount < MAX_VETOS_DE_VOCABULARIO_INTERNO) {
+              return { ok: false, error: { code: chain.code, message: chain.message } };
+            }
+            runLog.warn('fail-safe do gate de vocabulário interno: envio liberado após vetos seguidos', {
+              vetos: internalVocabularyVetoCount,
+            });
+            // `openedCaseThisTurn` vai pelo valor VIVO (o fail-safe de casos acima pode
+            // tê-lo mudado); reusar o do objeto capturado re-vetaria no case_promise.
+            chain = await runBeforeSend({
+              ...beforeSendArgs,
+              openedCaseThisTurn,
+              hasOpenCase: hasOpenCase || openedCaseThisTurn,
+              enforceInternalVocabulary: false,
+            });
           }
           if (chain.status === 'vetoed') {
             // Erro de ENSINO pt-br (mesmo shape de get_lead_context/breaker): o
@@ -1702,9 +1756,7 @@ export async function runAgentTurn(
       {
         context: effectiveContext,
         currentStage,
-        ...((deps.knobs.stageClassifier.model ?? agentModel) !== undefined
-          ? { model: (deps.knobs.stageClassifier.model ?? agentModel) as string }
-          : {}),
+        ...argsAux(deps.knobs.stageClassifier.model),
       },
       { registry: deps.registry, log: runLog },
     );
@@ -1725,9 +1777,7 @@ export async function runAgentTurn(
       { tenantId, leadId, jobId: job.id },
       {
         message: skillSignal,
-        ...((deps.knobs.jailbreak.model ?? agentModel) !== undefined
-          ? { model: (deps.knobs.jailbreak.model ?? agentModel) as string }
-          : {}),
+        ...argsAux(deps.knobs.jailbreak.model),
       },
       { registry: deps.registry, log: runLog },
     );

@@ -1,0 +1,50 @@
+{
+  "prompt_kind": "operador",
+  "cenario": "10-mandar-resposta-pronta",
+  "mensagem": "Pega a resposta pronta de confirmação de consulta, preenche com o nome do paciente e me mostra como vai ficar.",
+  "esperado": "crm_render_message_template",
+  "rodou": true,
+  "status": "completed",
+  "final_text": "Não encontrei uma resposta pronta de **confirmação de consulta**. Há apenas este modelo disponível:\n\n> Olá {{nome}}, recebemos seu contato e retornamos em breve.\n\nSe você indicar qual é o paciente (ou o contato no CRM), posso preencher esse modelo.",
+  "ferramentas": [
+    "crm_list_message_templates"
+  ],
+  "tool_calls": [
+    {
+      "step": 0,
+      "finish_reason": "tool-calls",
+      "tokens_in": 2172,
+      "tokens_out": 58,
+      "tool_calls": [
+        {
+          "tool_name": "crm_list_message_templates",
+          "args": {},
+          "result": {
+            "modelos": [
+              {
+                "id": "83aee375-9447-4e29-b053-3d8f394fdff8",
+                "titulo": "Resposta QA 1785944501033",
+                "corpo": "Olá {{nome}}, recebemos seu contato e retornamos em breve.",
+                "atalho": null,
+                "compartilhado": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": 1,
+      "text": "Não encontrei uma resposta pronta de **confirmação de consulta**. Há apenas este modelo disponível:\n\n> Olá {{nome}}, recebemos seu contato e retornamos em breve.\n\nSe você indicar qual é o paciente (ou o contato no CRM), posso preencher esse modelo.",
+      "finish_reason": "stop",
+      "tokens_in": 2314,
+      "tokens_out": 60,
+      "tool_calls": []
+    }
+  ],
+  "latency_ms": 3704,
+  "cost_cents": 2,
+  "model": "gpt-5.6-terra",
+  "agent_version_id": "fec5184f-a338-4282-a9e6-b3960e22b5c0",
+  "medido_em": "2026-08-05T20:04:02.572Z"
+}

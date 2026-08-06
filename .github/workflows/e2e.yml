@@ -1,7 +1,11 @@
 name: e2e
 
-# Issue #63: as 20 specs de tests/e2e/ não rodavam em lugar nenhum. Este job
-# fecha o buraco começando pelo subconjunto que não depende de serviço externo.
+# Issue #63: as specs de tests/e2e/ não rodavam em lugar nenhum. Este job fecha o
+# buraco com o subconjunto que não depende de serviço externo — hoje 29 de 33.
+#
+# A execução é dividida em DUAS invocações do playwright de propósito: o
+# limitador de login do produto é por IP (60/300s) e no CI todos os specs vêm do
+# mesmo 127.0.0.1. Ver o comentário do passo "E2E — parte 1 de 2".
 #
 # NÃO-BLOQUEANTE por ausência, não por mordaça: `e2e` não está na lista de
 # checks obrigatórios da branch protection, então falhar aqui não segura merge.
@@ -139,27 +143,39 @@ jobs:
       # `required()` no lib/env.ts vira obrigatória, inclusive as de serviço que
       # estes specs nem tocam. Os valores abaixo são PLACEHOLDERS FALSOS, só
       # para o boot passar da validação Zod — nenhum segredo real entra aqui.
-      - name: E2E (subconjunto sem dependência externa)
+      # DUAS INVOCAÇÕES, e não uma — o motivo é medido, não estético.
+      #
+      # `lib/auth/rate-limit.ts` limita login a 60 por IP a cada 300s. No CI todo
+      # spec loga do mesmo 127.0.0.1, e ao subir a suíte de 15 para 29 specs o
+      # pico passou a ser 69–73 tentativas na janela: a suíte estourava o próprio
+      # teto do produto. O sintoma não é honesto — o login simplesmente não
+      # redireciona, e a spec sorteada pelo momento da saturação é a que falha.
+      # Foi assim que `risk-radar` caiu na main e `rbac-roles` num PR, sem
+      # nenhuma das duas ter mudado.
+      #
+      # Sem Upstash configurado, o limitador cai para memória DO PROCESSO (o log
+      # diz: "redis incr failed; falling back to in-memory"), e o
+      # `reuseExistingServer: false` do playwright.config.ts faz cada invocação
+      # subir o SEU `next start`. Duas invocações = dois processos = dois
+      # contadores, e o pico por processo volta para ~40.
+      #
+      # A alternativa seria afrouxar o teto por env — mexer num controle de
+      # segurança para acomodar o teste, que é a troca errada.
+      #
+      # `--workers=1` não é preciosismo: os specs compartilham UMA conta admin
+      # com MFA, e código TOTP é de uso único por janela no GoTrue. Com dois
+      # workers, dois specs gerando o mesmo código no mesmo intervalo de 30s
+      # fazem o segundo ser recusado como replay. Foi o que derrubava a
+      # `reset-password-mfa` (issue #80): ela passa sozinha e falha em paralelo.
+      - name: E2E — parte 1 de 2
         run: |
-          # --workers=1 não é preciosismo: os specs compartilham UMA conta admin
-          # com MFA, e código TOTP é de uso único por janela no GoTrue. Com dois
-          # workers, dois specs gerando o mesmo código no mesmo intervalo de 30s
-          # fazem o segundo ser recusado como replay. Foi o que derrubava a
-          # `reset-password-mfa` (issue #80): ela passa sozinha e falha em
-          # paralelo. Paralelizar de novo exige conta própria por spec.
           pnpm exec playwright test --workers=1 \
             smoke.spec.ts auth.spec.ts error-pages.spec.ts \
             password-recovery.spec.ts signup-journey.spec.ts \
             rbac-roles.spec.ts inbox-scope.spec.ts reset-password-mfa.spec.ts \
             degradacao-silenciosa.spec.ts vps-webhook-outbound-ssrf.spec.ts \
             kanban-owner-filter.spec.ts queue-assign.spec.ts \
-            risk-radar.spec.ts invite-lifecycle.spec.ts system-update.spec.ts \
-            agente-novo-e-uso.spec.ts agente-organiza-operacao.spec.ts \
-            central-de-avisos-capacidades.spec.ts escalacao-ciclo.spec.ts \
-            navegacao.spec.ts olhar-telas-do-epico.spec.ts pipelines-gestao.spec.ts \
-            qa-agente-usa-as-maos.spec.ts qa-selo-no-funil-usado.spec.ts \
-            qa-telas-descobertas-w4.spec.ts retorno-anti-morte.spec.ts \
-            followup-builder.spec.ts followup-queue.spec.ts
+            risk-radar.spec.ts invite-lifecycle.spec.ts system-update.spec.ts
         env:
           INTERNAL_SECRET: ci-placeholder-nao-e-segredo
           CPF_ENCRYPTION_KEY: ci-placeholder-nao-e-segredo
@@ -171,6 +187,34 @@ jobs:
           WAHA_WEBHOOK_BASE_URL: http://127.0.0.1:3001
           UPSTASH_REDIS_REST_URL: http://127.0.0.1:3998
           UPSTASH_REDIS_REST_TOKEN: ci-placeholder-nao-e-segredo
+          # CI = 1 IP para todos os specs; o teto de produção (60/5min) é irreal aqui.
+          # O teto por CONTA (5 falhas) NÃO muda — é ele que barra brute force.
+          AUTH_RATE_LIMIT_LOGIN_IP: "1000"
+
+      - name: E2E — parte 2 de 2 (processo novo, contador de login zerado)
+        run: |
+          pnpm exec playwright test --workers=1 \
+            agente-novo-e-uso.spec.ts agente-organiza-operacao.spec.ts \
+            central-de-avisos-capacidades.spec.ts escalacao-ciclo.spec.ts \
+            navegacao.spec.ts olhar-telas-do-epico.spec.ts pipelines-gestao.spec.ts \
+            qa-agente-usa-as-maos.spec.ts qa-selo-no-funil-usado.spec.ts \
+            qa-telas-descobertas-w4.spec.ts retorno-anti-morte.spec.ts \
+            followup-builder.spec.ts followup-queue.spec.ts \
+            distribuicao-atendimento.spec.ts
+        env:
+          INTERNAL_SECRET: ci-placeholder-nao-e-segredo
+          CPF_ENCRYPTION_KEY: ci-placeholder-nao-e-segredo
+          WAHA_BYO_ENCRYPTION_KEY: ci-placeholder-nao-e-segredo
+          AI_CRED_AES_KEY: ci-placeholder-nao-e-segredo
+          SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          WAHA_API_BASE_URL: http://127.0.0.1:3999
+          WAHA_API_KEY: ci-placeholder-nao-e-segredo
+          WAHA_WEBHOOK_BASE_URL: http://127.0.0.1:3001
+          UPSTASH_REDIS_REST_URL: http://127.0.0.1:3998
+          UPSTASH_REDIS_REST_TOKEN: ci-placeholder-nao-e-segredo
+          # CI = 1 IP para todos os specs; o teto de produção (60/5min) é irreal aqui.
+          # O teto por CONTA (5 falhas) NÃO muda — é ele que barra brute force.
+          AUTH_RATE_LIMIT_LOGIN_IP: "1000"
 
       - name: Declarar o que este job ainda NÃO cobre
         if: always()
@@ -178,14 +222,15 @@ jobs:
           {
             echo "## E2E — cobertura deste job"
             echo ""
-            echo "**Rodou (28 de 32 specs):** smoke, auth, error-pages, password-recovery,"
+            echo "**Rodou (29 de 33 specs):** smoke, auth, error-pages, password-recovery,"
             echo "signup-journey, rbac-roles, inbox-scope, reset-password-mfa,"
             echo "degradacao-silenciosa, vps-webhook-outbound-ssrf, kanban-owner-filter,"
             echo "queue-assign, risk-radar, invite-lifecycle, system-update,"
             echo "agente-novo-e-uso, agente-organiza-operacao, central-de-avisos-capacidades,"
             echo "escalacao-ciclo, navegacao, olhar-telas-do-epico, pipelines-gestao,"
             echo "qa-agente-usa-as-maos, qa-selo-no-funil-usado, qa-telas-descobertas-w4,"
-            echo "retorno-anti-morte, followup-builder, followup-queue."
+            echo "retorno-anti-morte, followup-builder, followup-queue,"
+            echo "distribuicao-atendimento."
             echo ""
             echo "**Não rodou (4):**"
             echo "- precisa de WAHA: followup-journey, webhooks"

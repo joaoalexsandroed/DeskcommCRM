@@ -1,0 +1,95 @@
+{
+  "prompt_kind": "operador",
+  "cenario": "3-diagnostico-de-entrada",
+  "mensagem": "O formulário do nosso site parou de trazer contatos hoje. Consegue descobrir o que houve?",
+  "esperado": "crm_list_webhook_sources + crm_list_webhook_source_events",
+  "rodou": true,
+  "status": "completed",
+  "final_text": "Verifiquei a configuração: **não há nenhuma entrada automática/webhook cadastrada** para receber os envios do formulário — nem ativa nem desativada. Portanto, não há eventos de recebimento para diagnosticar assinatura ou mapeamento de campos.\n\nExiste uma regra ativa chamada **“SSRF Outbound 1785496528461”**, mas ela só dispara **depois que um lead é criado**; não é ela que recebe os dados do site.\n\nO mais provável é que a integração do formulário tenha sido removida ou nunca configurada nesta clínica. É preciso revisar no site para qual URL ele está enviando os dados e cadastrar/reativar uma entrada de formulário no CRM.",
+  "ferramentas": [
+    "crm_list_webhook_sources",
+    "crm_list_webhook_sources",
+    "crm_list_automation_rules"
+  ],
+  "tool_calls": [
+    {
+      "step": 0,
+      "finish_reason": "tool-calls",
+      "tokens_in": 2167,
+      "tokens_out": 50,
+      "tool_calls": [
+        {
+          "tool_name": "crm_list_webhook_sources",
+          "args": {
+            "only_active": true
+          },
+          "result": {
+            "entradas": []
+          }
+        }
+      ]
+    },
+    {
+      "step": 1,
+      "finish_reason": "tool-calls",
+      "tokens_in": 2236,
+      "tokens_out": 35,
+      "tool_calls": [
+        {
+          "tool_name": "crm_list_webhook_sources",
+          "args": {
+            "only_active": false
+          },
+          "result": {
+            "entradas": []
+          }
+        }
+      ]
+    },
+    {
+      "step": 2,
+      "finish_reason": "tool-calls",
+      "tokens_in": 2290,
+      "tokens_out": 64,
+      "tool_calls": [
+        {
+          "tool_name": "crm_list_automation_rules",
+          "args": {
+            "only_active": true
+          },
+          "result": {
+            "regras": [
+              {
+                "id": "7981d2ae-ad34-48d9-815b-3bf4d2e5d7f1",
+                "name": "SSRF Outbound 1785496528461",
+                "is_active": true,
+                "trigger_event": "lead.created",
+                "acoes": [
+                  "call_webhook"
+                ],
+                "quantidade_de_condicoes": 0,
+                "last_run_at": "2026-08-05T14:11:39.48+00:00",
+                "run_count": 22,
+                "last_change_actor_kind": null,
+                "last_change_at": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "step": 3,
+      "text": "Verifiquei a configuração: **não há nenhuma entrada automática/webhook cadastrada** para receber os envios do formulário — nem ativa nem desativada. Portanto, não há eventos de recebimento para diagnosticar assinatura ou mapeamento de campos.\n\nExiste uma regra ativa chamada **“SSRF Outbound 1785496528461”**, mas ela só dispara **depois que um lead é criado**; não é ela que recebe os dados do site.\n\nO mais provável é que a integração do formulário tenha sido removida ou nunca configurada nesta clínica. É preciso revisar no site para qual URL ele está enviando os dados e cadastrar/reativar uma entrada de formulário no CRM.",
+      "finish_reason": "stop",
+      "tokens_in": 2483,
+      "tokens_out": 144,
+      "tool_calls": []
+    }
+  ],
+  "latency_ms": 9164,
+  "cost_cents": 3,
+  "model": "gpt-5.6-terra",
+  "agent_version_id": "c373d144-e3b5-4627-9be2-2b3121bbac28",
+  "medido_em": "2026-08-05T20:02:01.498Z"
+}

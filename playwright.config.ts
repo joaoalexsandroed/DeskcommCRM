@@ -39,6 +39,12 @@ export default defineConfig({
     // false: reusar um server que já ocupa a porta pode ser OUTRO processo
     // (ex.: bundle do Remotion na 3000) — o teste precisa do NOSSO next start.
     reuseExistingServer: false,
+    // NÃO declare `env:` aqui sem espalhar `process.env` junto. O default do
+    // Playwright é herdar o ambiente, e o CI depende disso: o teto de login por
+    // IP (`AUTH_RATE_LIMIT_LOGIN_IP`) é definido no passo do workflow e precisa
+    // chegar ao `next start`, porque quem aplica o rate limit é o SERVIDOR.
+    // Declarar `env` aqui substitui o ambiente inteiro e o teto volta a 60 —
+    // o sintoma seria "Muitas tentativas" numa spec tardia, não um erro de config.
     timeout: 120_000,
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],

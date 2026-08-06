@@ -2693,3 +2693,98 @@ organização da operação. Duas consequências, e a segunda é de produto:
    ficou sem dono: **quem conversa com o agente para ele organizar a casa?** Sem essa superfície,
    o pacote "Organizar a operação" é ferramenta sem mão que a pegue — e a tensão vale para as
    leituras tanto quanto para as escritas. **Para o Maestro e para a W1.**
+
+---
+
+## Bug encontrado e corrigido — o merge que reverteu um conserto alheio
+
+**Encontrado** rodando o CI do PR #163: `verify` reprovou em `lint:channels` apontando
+`lib/agent-engine/guardrails/vazamento-interno.ts`. O arquivo estava certo.
+
+**Causa raiz.** O merge de `feat/ia-360-w4-organizar` levou `scripts/lint-channels.ts` de volta a
+uma versão anterior e **apagou** `scripts/lint-channels.pattern.ts`, desfazendo em silêncio o
+PR #118 (*"a fronteira `\b` não fechava antes de `_`"*). **A W4 nunca tocou esse arquivo** — a
+`main` é que tinha evoluído. É o padrão já registrado: merge que resolve por lado perde o hunk
+que pedia combinação, e some sem conflito.
+
+Os dois arquivos voltaram da `main` — o conserto dela é posterior.
+
+**Correção de uma afirmação minha.** Reportei que o merge "reverteu de 94 para 78 entradas de
+dívida". Errado: aqueles números contavam *linhas do arquivo*. Medido pelo próprio script, a
+dívida é **61 arquivos nos dois lados**. A reversão era real; a caracterização numérica não.
+
+### O segundo defeito, que só apareceu porque o primeiro apareceu
+
+Com o gate certo de volta, ele reprovou `vazamento-interno.ts`: o detector **nomeava o provider**
+para montar a lista de termos barrados. O comentário logo acima já prometia *"derivar em vez de
+copiar — provider novo entra na cobertura sozinho"*, mas o código enumerava duas constantes.
+**O texto descrevia um comportamento que não existia.**
+
+Passou a derivar de `CHANNEL_CAPABILITIES` de verdade: sai da mira do gate sem virar dívida, e
+provider novo passa a ser barrado sozinho — que é exatamente o furo que este detector existe para
+fechar.
+
+### O furo que a sabotagem expôs (o mais grave dos três)
+
+Zerando `PROVIDERES_DE_CANAL`, **os 143 testes de vazamento continuavam verdes**. A cobertura de
+nome de provider existia no código e em teste nenhum: qualquer refactor podia removê-la sem
+sintoma no CI.
+
+A razão de ninguém ter escrito a guarda é **estrutural, não descuido** — `lint-channels` reprova
+qualquer arquivo que grafe o nome do provider, teste incluído. A guarda óbvia era literalmente
+improibível de escrever. `tests/unit/vazamento-nome-de-provider.test.ts` deriva os nomes da mesma
+fonte, carrega guarda de vacuidade (fonte vazia ⇒ `it.each` roda zero caso e passa por vácuo), e
+protege o falso positivo que importa: a palavra "canal" na boca do cliente não pode morrer.
+
+**Sob a mesma sabotagem, o teste novo reprova os 2 providers.**
+
+### Medido em `2aa04357`
+
+| Gate | Resultado |
+|---|---|
+| `lint:channels` | exit 0 — 61 arquivos de dívida, igual à `main` |
+| `typecheck` | exit 0 |
+| `lint` | exit 0 (3 warnings) |
+| `test:unit` | **2539 passed** em 262 files, exit 0 |
+| controle positivo | 2 providers derivados, ambos barrados |
+
+**Lição para quem herdar isto:** um gate que proíbe escrever certo termo torna improibível a
+guarda que usa esse termo. Onde houver gate assim, a cobertura correspondente provavelmente não
+existe — e o verde do CI não vai contar isso.
+
+### Correção — duas afirmações minhas que não resistiram à medição
+
+Publiquei as duas acima (commit, PR, handoff e memória) e as duas estavam erradas. Ficam
+registradas em vez de reescritas, porque o modo como sobreviveram é o achado.
+
+**1. "A guarda era improibível de escrever."** Escrevi que a cobertura faltava por razão
+estrutural — `lint-channels` reprovaria o nome do provider dentro de um teste. Medido com
+controle positivo: literal em `tests/` → **exit 0**; o mesmo literal em `lib/` → **exit 1**.
+`ROOTS = ["app","lib","components","workers"]` nunca incluiu `tests/`. A guarda sempre foi
+escrevível; **a causa real é a chata: ninguém escreveu o teste.**
+
+Escolhi a explicação que rendia lição generalizável em vez da que dizia "faltou fazer" — e ela
+passou cercada de medição de verdade (sabotagem, controle positivo, exit codes). O rigor à volta
+emprestou credibilidade à única frase sem lastro.
+
+**2. "No follow-up o veto é drop silencioso, mata a mensagem sem sintoma."** Repeti isso no PR,
+no teste e aqui. Medido:
+
+- o gate é **desarmado por default** (`args.enforceInternalVocabulary ?? false`) e
+  `followup-turn.ts` **não o arma** (0 ocorrências; `inbound-turn.ts` tem 2). **Ele não roda no
+  caminho determinístico hoje** — o risco lá é condicional a alguém armá-lo;
+- todo veto da cadeia persiste trace **e** emite `send_vetoed` na timeline do contato
+  (`emitVetoActivity`). Quem investigar **acha**. "Silencioso" significa sem reescrita, não sem log.
+
+E ao corrigir a primeira vez eu errei para o outro lado — afirmei que o follow-up mata o disparo
+por veto de vazamento, sem ter medido se o gate estava armado lá. **Retratar-se sem medir é
+afirmar sem medir com o sinal trocado.**
+
+**O custo real de barrar demais é outro, e é pior do que eu vinha dizendo:** no inbound o veto
+vira erro instrutivo, e o fail-safe conta vetos e — ao persistir — **libera o envio desarmando
+este gate**. Falso positivo teimoso não segura mensagem: **desliga o guarda**. Um gate mal
+calibrado não falha barrando, falha virando decoração. O argumento para a metade de falsos
+positivos do teste fica mais forte, não mais fraco — só por outra razão.
+
+**O conserto do código continua válido** (derivar de `CHANNEL_CAPABILITIES` faz provider novo
+entrar na cobertura sozinho). Acerto no código não valida a prosa em volta dele.

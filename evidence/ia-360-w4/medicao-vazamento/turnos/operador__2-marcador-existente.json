@@ -1,0 +1,44 @@
+{
+  "prompt_kind": "operador",
+  "cenario": "2-marcador-existente",
+  "mensagem": "Quero marcar este atendimento como urgente. Que marcadores a gente já usa? Não quero criar um repetido.",
+  "esperado": "crm_list_tags antes de qualquer crm_manage_tags",
+  "rodou": true,
+  "status": "completed",
+  "final_text": "No momento, não há marcadores cadastrados em uso na clínica. Portanto, não existe um marcador de urgência já padronizado para reutilizar.",
+  "ferramentas": [
+    "crm_list_tags"
+  ],
+  "tool_calls": [
+    {
+      "step": 0,
+      "finish_reason": "tool-calls",
+      "tokens_in": 2171,
+      "tokens_out": 37,
+      "tool_calls": [
+        {
+          "tool_name": "crm_list_tags",
+          "args": {
+            "limit": 60
+          },
+          "result": {
+            "marcadores": []
+          }
+        }
+      ]
+    },
+    {
+      "step": 1,
+      "text": "No momento, não há marcadores cadastrados em uso na clínica. Portanto, não existe um marcador de urgência já padronizado para reutilizar.",
+      "finish_reason": "stop",
+      "tokens_in": 2226,
+      "tokens_out": 35,
+      "tool_calls": []
+    }
+  ],
+  "latency_ms": 17047,
+  "cost_cents": 1,
+  "model": "gpt-5.6-terra",
+  "agent_version_id": "e267a89b-69e3-42d5-b109-be5d5bc6bd24",
+  "medido_em": "2026-08-05T20:01:38.590Z"
+}

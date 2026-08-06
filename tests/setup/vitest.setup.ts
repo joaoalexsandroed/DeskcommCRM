@@ -11,7 +11,10 @@ for (const envFile of [".env", ".env.local"]) {
       if (!trimmed || trimmed.startsWith("#")) continue;
       const [key, ...rest] = trimmed.split("=");
       if (key && !process.env[key]) {
-        process.env[key] = rest.join("=");
+        // dotenv permite valor entre aspas simples/duplas; sem isto o valor
+        // vira literalmente `'https://...'` (aspas inclusas) e quebra
+        // validação Zod de URL/enum em lib/env.ts (ex.: NEXT_PUBLIC_SUPABASE_URL).
+        process.env[key] = rest.join("=").replace(/^(['"])(.*)\1$/, "$2");
       }
     }
   } catch {

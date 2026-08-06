@@ -311,9 +311,14 @@ stack_up() {
   if is_orion_vps; then
     step "Buildando a imagem do worker (Swarm não builda — ver PATCH-ORION.md)"
     docker build -f Dockerfile.worker -t "${WORKER_IMAGE:-deskcommcrm-worker:local}" "$PROJECT_DIR"
-    # 'worker' fica de fora: a imagem é local-only (nunca foi a nenhum
-    # registro), puxar ela daria erro. Os outros têm imagem pública normal.
-    docker compose -f "$COMPOSE" pull app waha redis srh scheduler
+    # 'worker' fica de fora sempre (imagem local-only, nunca foi a um
+    # registro). 'app' fica de fora só quando já existe local: instalação com
+    # build próprio do app (fork com features fora do release oficial, ex.:
+    # esta VPS) não tem de onde puxar; o padrão do kit (imagem do ghcr.io,
+    # ainda não baixada na 1ª instalação) segue pulled normalmente.
+    local app_img="${APP_IMAGE:-ghcr.io/melgarafael/deskcommcrm:latest}" pull_alvo="waha redis srh scheduler"
+    docker image inspect "$app_img" >/dev/null 2>&1 || pull_alvo="app $pull_alvo"
+    docker compose -f "$COMPOSE" pull $pull_alvo
     # `docker stack deploy` NÃO lê .env sozinho pra resolver ${VAR} no YAML
     # (diferente do `docker compose`) — exporta pro shell antes de deployar.
     set -a; . ./.env; set +a
@@ -326,6 +331,14 @@ stack_up() {
     # --resolve-image never: não deixa o Swarm tentar resolver/checar a tag do
     # worker contra um registro (ela só existe local) — usa o que já tem aqui.
     docker stack deploy --resolve-image never -c "$COMPOSE" "$STACK_NAME"
+    # Tag igual (deskcommcrm-app:local, deskcommcrm-worker:local) +
+    # `--resolve-image never`: o Swarm compara a SPEC, não o conteúdo da
+    # imagem, e um rebuild local (mesma tag, digest novo) não conta como
+    # mudança — medido nesta VPS: a task seguia "Running" de antes do rebuild
+    # depois de um `stack deploy` limpo. Force-update garante que a task rode
+    # o que acabou de ser buildado; sem custo real quando não havia rebuild.
+    docker service update --force --quiet "${STACK_NAME}_app" >/dev/null
+    docker service update --force --quiet "${STACK_NAME}_worker" >/dev/null
   else
     # `dc`, não `docker compose -f "$COMPOSE"` cru: preserva o override
     # REVERSE_PROXY=traefik (docker-compose.traefik.yml) fora do modo Swarm.

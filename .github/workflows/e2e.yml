@@ -100,8 +100,37 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
           SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY
           INTERNAL_SECRET=ci-placeholder-nao-e-segredo
+          SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
           EOF
           pnpm exec tsx scripts/seed-e2e-credentials.ts
+
+      # `SUPABASE_DB_URL` no `.env.local` (e não só no `env:` do passo de teste):
+      # `seed-e2e-escalacao.ts` abre um `pg.Pool` direto, e o `.env.local` é a
+      # única fonte que ele lê. Sem a linha, o `pg` cai no default 5432 e morre
+      # com ECONNREFUSED — o stack local do Supabase publica o Postgres na 54322.
+      # Medido: foi exatamente assim que a primeira execução deste passo falhou.
+      #
+      # A maioria das specs roda o próprio seed num `beforeAll`. Estas TRÊS não
+      # — ou o cabeçalho manda rodar à mão, ou a fixture é de outra spec.
+      #
+      # `seed-e2e-followup-agent` (credencial de IA + sessão de canal) é o caso
+      # sutil: `followup-builder` o roda no próprio `beforeAll`, mas
+      # `agente-novo-e-uso` PRECISA das mesmas fixtures e vem ANTES na ordem
+      # alfabética — em banco fresco os comboboxes de credencial e canal abrem
+      # com a opção desabilitada e o clique estoura por timeout. Medido: o
+      # ensaio local passou porque o banco tinha as fixtures de uma rodada
+      # anterior; o CI, fresco, reprovou. Rodar aqui torna a precondição
+      # explícita em vez de depender da ordem dos arquivos.
+      #
+      # `--env-file` só na segunda, e a diferença não é capricho: o seed de
+      # capacidades importa `lib/env.ts` (via lib/ai/embed.ts), que lê
+      # `process.env`; o de escalação parseia o `.env.local` por conta própria.
+      # Sem a flag o de capacidades morre na validação Zod das 3 vars do Supabase.
+      - name: Semear as fixtures que as specs não semeiam sozinhas
+        run: |
+          pnpm exec tsx scripts/seed-e2e-escalacao.ts
+          pnpm exec tsx --env-file=.env.local scripts/seed-e2e-capacidades-ausentes.ts
+          pnpm exec tsx scripts/seed-e2e-followup-agent.ts
 
       # O que ficou DE FORA (e por quê) é declarado no passo de summary —
       # cobertura parcial silenciosa se lê como cobertura total.
@@ -124,7 +153,13 @@ jobs:
             rbac-roles.spec.ts inbox-scope.spec.ts reset-password-mfa.spec.ts \
             degradacao-silenciosa.spec.ts vps-webhook-outbound-ssrf.spec.ts \
             kanban-owner-filter.spec.ts queue-assign.spec.ts \
-            risk-radar.spec.ts invite-lifecycle.spec.ts system-update.spec.ts
+            risk-radar.spec.ts invite-lifecycle.spec.ts system-update.spec.ts \
+            agente-novo-e-uso.spec.ts agente-organiza-operacao.spec.ts \
+            central-de-avisos-capacidades.spec.ts escalacao-ciclo.spec.ts \
+            navegacao.spec.ts olhar-telas-do-epico.spec.ts pipelines-gestao.spec.ts \
+            qa-agente-usa-as-maos.spec.ts qa-selo-no-funil-usado.spec.ts \
+            qa-telas-descobertas-w4.spec.ts retorno-anti-morte.spec.ts \
+            followup-builder.spec.ts followup-queue.spec.ts
         env:
           INTERNAL_SECRET: ci-placeholder-nao-e-segredo
           CPF_ENCRYPTION_KEY: ci-placeholder-nao-e-segredo
@@ -143,17 +178,25 @@ jobs:
           {
             echo "## E2E — cobertura deste job"
             echo ""
-            echo "**Rodou (15 de 20 specs):** smoke, auth, error-pages, password-recovery,"
+            echo "**Rodou (28 de 32 specs):** smoke, auth, error-pages, password-recovery,"
             echo "signup-journey, rbac-roles, inbox-scope, reset-password-mfa,"
             echo "degradacao-silenciosa, vps-webhook-outbound-ssrf, kanban-owner-filter,"
-            echo "queue-assign, risk-radar, invite-lifecycle, system-update."
+            echo "queue-assign, risk-radar, invite-lifecycle, system-update,"
+            echo "agente-novo-e-uso, agente-organiza-operacao, central-de-avisos-capacidades,"
+            echo "escalacao-ciclo, navegacao, olhar-telas-do-epico, pipelines-gestao,"
+            echo "qa-agente-usa-as-maos, qa-selo-no-funil-usado, qa-telas-descobertas-w4,"
+            echo "retorno-anti-morte, followup-builder, followup-queue."
             echo ""
-            echo "**Não rodou (5):**"
+            echo "**Não rodou (4):**"
             echo "- precisa de WAHA: followup-journey, webhooks"
             echo "- precisa de WAHA + Redis + Resend + Nuvemshop: vps-fresh-onboarding (P0)"
-            echo "- seed próprio falha neste ambiente (medido): followup-builder"
-            echo "  (seed-e2e-followup-agent.ts não grava followup_agent_fixtures) e"
-            echo "  followup-queue (followup_promise ausente em .e2e-creds.json)."
+            echo "- **capacidades-do-agente: fora porque REPROVA, e o vermelho está certo.**"
+            echo "  Ligar o pacote 'Atender' enche o teto de 20 capacidades, e aí a UI"
+            echo "  DESABILITA o checkbox da capacidade crítica que o próprio desenho"
+            echo "  manda o humano marcar à mão ('o pacote não liga por você'). O seed"
+            echo "  liga 3; o pacote traz >=17 automáticas. Não é dado sujo: é o catálogo"
+            echo "  ter crescido depois que a spec foi escrita — e ninguém soube porque"
+            echo "  ela nunca rodou no gate, que é a tese desta issue."
             echo ""
             echo "Expandir é trabalho de seguimento — issue #63."
           } >> "$GITHUB_STEP_SUMMARY"

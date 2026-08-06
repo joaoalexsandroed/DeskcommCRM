@@ -21,6 +21,9 @@
 import { z } from 'zod';
 import type pg from 'pg';
 
+import { expectativaDeAtendimento } from '@/lib/escalacao/disponibilidade';
+import { emitAgentActivityForContact } from '@/lib/leads/agent-activity';
+
 import type { Logger } from '../obs/logger';
 import { cancelPendingCronsForLead } from '../cron/scheduler';
 import { findForbiddenKey, zodIssuesSummary } from './lead-state';
@@ -196,6 +199,37 @@ export async function performHumanHandoff(
     ],
   );
 
+  // (e) A IDA na linha do tempo do NEGÓCIO. `triggerHandoff` (o caminho do CRM)
+  // já gravava `handoff_triggered`; este caminho — o do harness e o do "Assumir
+  // eu" dos casos — não gravava nada. Metade das passagens era invisível no
+  // dossiê do cliente, e quem lesse a timeline veria a volta sem a ida.
+  //
+  // O `reason` é FIXO de propósito: `opts.reason` pode ser o texto livre que o
+  // atendente escreveu ao escalar, e esta linha aparece na tela e no export de
+  // LGPD (regra do activity-emitter: o porquê é legível, sem PII).
+  //
+  // Try/catch porque a timeline não pode derrubar a operação que ela descreve —
+  // mesma disciplina fire-and-forget do emissor da API.
+  try {
+    const roteou = await emitAgentActivityForContact({
+      pool: db,
+      organizationId: ids.tenantId,
+      contactId: ids.leadId,
+      type: 'handoff_triggered',
+      sourceModule: 'human-handoff',
+      sourceId: ids.conversationId,
+      reason: 'Atendimento passado para uma pessoa',
+      payload: { conversation_id: ids.conversationId },
+    });
+    if (!roteou.routed) {
+      opts.log.warn('handoff: atividade não roteada para um negócio', { reason: roteou.reason });
+    }
+  } catch (err) {
+    opts.log.warn('handoff: atividade da passagem não foi gravada', {
+      error: err instanceof Error ? err.message.slice(0, 200) : 'erro desconhecido',
+    });
+  }
+
   // PII fora do log: só ids/motivo — nunca o resumo da conversa (regra dura 8).
   opts.log.info('handoff humano aplicado (force_human + silêncio + crons cancelados + inbox)', {
     reason: opts.reason,
@@ -241,12 +275,18 @@ export async function applyRequestHumanHandoff(
     log: opts.log,
   });
 
+  // ACH-03: a expectativa vai JUNTO com a confirmação. Antes, a mensagem afirmava
+  // que "um atendente vai assumir" sem que ninguém tivesse olhado se havia
+  // alguém — e o agente repassava essa promessa ao cliente. Agora a resposta
+  // carrega o estado real da equipe, e o modelo não precisa lembrar de perguntar.
+  const { frase } = await expectativaDeAtendimento(db, ids.tenantId, new Date());
+
   return {
     ok: true,
     status: 'handoff_solicitado',
     message:
-      'Handoff humano acionado: um atendente vai assumir a conversa. Encerre o turno AGORA, ' +
-      'sem enviar mais mensagens ao lead.',
+      `Handoff humano acionado; a conversa saiu do atendimento automático. ${frase} ` +
+      'Encerre o turno AGORA, sem enviar mais mensagens ao lead além do aviso.',
   };
 }
 

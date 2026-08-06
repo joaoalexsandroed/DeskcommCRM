@@ -103,6 +103,19 @@ const PARES: Array<{
     simbolo: "InboxKind",
   },
   {
+    tabela: "agent_case_events",
+    coluna: "kind",
+    // lib/agent-engine/agent/human-cases.ts → CaseEventKind.
+    //
+    // O par nasce no MESMO commit da 0100, que acrescentou 'agent_noted' à
+    // constraint. Antes dele o TypeScript não tinha lista nenhuma: cada INSERT
+    // escrevia o kind como string literal, e o único aviso de divergência seria
+    // um 23514 em produção, num caminho fire-and-forget (o registro do agente no
+    // chamado) que ninguém exercita em dev.
+    arquivo: "lib/agent-engine/agent/human-cases.ts",
+    simbolo: "CaseEventKind",
+  },
+  {
     tabela: "system_update_runs",
     coluna: "status",
     // lib/system/update-run.ts → RunStatus

@@ -1,5 +1,5 @@
 /**
- * GET /api/v1/ai/providers — lista os 3 provedores LLM suportados.
+ * GET /api/v1/ai/providers — lista os provedores LLM suportados.
  * Estático; serve apenas para a UI montar o select de credentials.
  */
 import { randomUUID } from "node:crypto";
@@ -27,6 +27,12 @@ const PROVIDERS = [
     display_name: "Google (Gemini)",
     docs_url: "https://ai.google.dev/gemini-api/docs/api-key",
     key_prefix_hint: "AIza",
+  },
+  {
+    id: "openrouter",
+    display_name: "OpenRouter",
+    docs_url: "https://openrouter.ai/docs/api-reference/authentication",
+    key_prefix_hint: "sk-or-",
   },
 ];
 

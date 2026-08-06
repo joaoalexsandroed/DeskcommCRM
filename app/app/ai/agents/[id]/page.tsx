@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { ROLE_RANK } from "@/lib/auth/types";
+import { listSelectableChannels } from "@/lib/channels/selectable";
 import { createClient } from "@/lib/supabase/server";
 import type { AgentRow } from "@/hooks/ai/useAgent";
 import type { AgentVersionRow } from "@/hooks/ai/useAgentVersions";
@@ -9,7 +10,6 @@ import type { CredentialRow } from "@/hooks/ai/useCredentials";
 
 import { AgentEditorClient } from "./_client";
 import { AgentTabs } from "./_components/AgentTabs";
-import type { ChannelSessionLite } from "./_components/AgentForm";
 
 export const dynamic = "force-dynamic";
 
@@ -59,7 +59,7 @@ export default async function AgentEditorPage({
   }
 
   // mcp_agent: busca versions + lookups.
-  const [versionsRes, credentialsRes, channelRes, routerMemberRes] = await Promise.all([
+  const [versionsRes, credentialsRes, channelSessions, routerMemberRes] = await Promise.all([
     supabase
       .from("ai_agent_versions")
       .select(VERSION_COLUMNS)
@@ -70,10 +70,7 @@ export default async function AgentEditorPage({
       .from("ai_provider_credentials_safe")
       .select(CREDENTIAL_COLUMNS)
       .eq("organization_id", activeOrg.orgId),
-    supabase
-      .from("channel_sessions")
-      .select("id, display_name, status, phone_number, waha_session_name")
-      .eq("organization_id", activeOrg.orgId),
+    listSelectableChannels(supabase, activeOrg.orgId),
     supabase
       .from("ai_router_members")
       .select("router_id, ai_routers(name)")
@@ -85,12 +82,6 @@ export default async function AgentEditorPage({
 
   const versions = (versionsRes.data ?? []) as unknown as AgentVersionRow[];
   const credentials = (credentialsRes.data ?? []) as unknown as CredentialRow[];
-  const channelSessions: ChannelSessionLite[] = (channelRes.data ?? []).map((c) => ({
-    id: c.id as string,
-    display_name: (c.display_name as string | null) ?? (c.waha_session_name as string),
-    status: c.status as string,
-    phone_number: (c.phone_number as string | null) ?? null,
-  }));
   const routerMemberRow = routerMemberRes.data as { router_id: string; ai_routers: { name: string } | null } | null;
   const routerMembership = routerMemberRow
     ? { routerId: routerMemberRow.router_id, routerName: routerMemberRow.ai_routers?.name ?? "roteador" }

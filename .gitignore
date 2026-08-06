@@ -66,10 +66,15 @@ supabase/.branches/
 .epic-executor/
 .playwright-mcp/
 
+# Backups gerados por hostgator-setup-kit/backup.sh nesta VPS (dump do banco +
+# sessões WhatsApp) — operacional, nunca deve ir para o repo.
+backups/
+
 # Sentry Config File
 .env.sentry-build-plugin
 inbox-with-real-msgs.png
 .e2e-creds.json
+.e2e-agente-mcp.json
 test-results/
 playwright-report/
 .vercel

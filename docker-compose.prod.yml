@@ -3,12 +3,25 @@
 # Só o Caddy publica portas (80/443). Todo o resto vive na rede interna.
 #
 #   docker compose -f docker-compose.prod.yml --env-file .env up -d
+#
+# VARIANTE ORION (VPS com Docker Swarm + Traefik já rodando, ex.: SetupOrion):
+# ver PATCH-ORION.md. Nessa variante este arquivo sobe via `docker stack deploy`
+# em vez de `docker compose up`, sem o serviço `caddy` (o Traefik já existente
+# na VPS assume TLS/roteamento por domínio) e com o `worker` apontando pra uma
+# imagem pré-buildada localmente (Swarm não builda).
 
 x-logging: &default-logging
   driver: json-file
   options:
     max-size: "10m"     # rotação: evita que o log encha o disco do VPS
     max-file: "3"
+
+x-restart-policy: &default-restart
+  # Só tem efeito em `docker stack deploy` (Swarm ignora o `restart:` de compose
+  # clássico); em `docker compose up` quem manda é o `restart:` de cada serviço.
+  restart_policy:
+    condition: any
+    delay: 5s
 
 services:
   app:
@@ -17,14 +30,19 @@ services:
     # <PublicEnvScript/> e o servidor via lib/env.ts. Não precisa buildar no VPS.
     # Build local (avançado): docker compose -f docker-compose.prod.yml -f docker-compose.build.yml build
     image: ${APP_IMAGE:-ghcr.io/melgarafael/deskcommcrm:latest}
-    pull_policy: ${APP_PULL_POLICY:-always}
+    # pull_policy removido: `docker stack deploy` (Swarm) rejeita essa chave
+    # ("Additional property pull_policy is not allowed"). Quem garante a
+    # imagem atualizada antes do deploy é o `docker compose pull` explícito
+    # em stack_up() (_common.sh) — em compose comum, sem essa chave o
+    # comportamento padrão já é puxar a imagem quando ausente/desatualizada.
     restart: unless-stopped
-    env_file: .env
-    depends_on:
-      srh:
-        condition: service_started
-      waha:
-        condition: service_started
+    # ${ENV_FILE:-.env}: `docker stack deploy` (Swarm) não remove as aspas
+    # simples que o install.sh grava em cada valor do .env (diferente do
+    # `docker compose`, que remove) — os containers receberiam "'valor'"
+    # literal. stack_up() (_common.sh) gera um .env.stack sem aspas e aponta
+    # ENV_FILE pra ele só nesse caminho; compose comum usa .env de sempre.
+    env_file: ${ENV_FILE:-.env}
+    depends_on: [srh, waha]
     healthcheck:
       # Probe TCP puro (node existe na imagem; curl/nc não). NÃO usar /api/v1/health:
       # ele dá 503 se WAHA/Redis caem, o que deixaria o app "unhealthy" e derrubaria
@@ -35,7 +53,40 @@ services:
       retries: 5
       start_period: 40s
     logging: *default-logging
-    networks: [internal]
+    networks:
+      internal: {}
+      # Só existe/é usada na variante ORION (ver PATCH-ORION.md); em compose
+      # comum sem essa rede externa criada, comente estas 2 linhas + o bloco
+      # `janet:` no final do arquivo.
+      janet: {}
+    deploy:
+      <<: *default-restart
+      labels:
+        # Habilitado só quando o container está na rede JANet do Traefik
+        # existente (variante ORION). Sem efeito em `docker compose up` comum
+        # (essas labels de deploy.* só são lidas por `docker stack deploy`).
+        - "traefik.enable=true"
+        - "traefik.docker.network=JANet"
+        - "traefik.http.routers.deskcommcrm.rule=Host(`${DOMAIN}`)"
+        - "traefik.http.routers.deskcommcrm.entrypoints=websecure"
+        - "traefik.http.routers.deskcommcrm.tls.certresolver=letsencryptresolver"
+        # Explícito porque desde o router deskcommcrm-agentrun abaixo há mais de
+        # um router Traefik neste container — sem isto o Traefik fica em dúvida
+        # de qual service cada router alcança (PATCH-ORION.md).
+        - "traefik.http.routers.deskcommcrm.service=deskcommcrm"
+        - "traefik.http.services.deskcommcrm.loadbalancer.server.port=3000"
+        - "traefik.http.services.deskcommcrm.loadbalancer.passHostHeader=1"
+        # NÃO tem serversTransport dedicado pra /api/internal/agents/run (que o
+        # Caddyfile original dava read/write_timeout=320s): testado nesta VPS,
+        # o provider "swarm" do Traefik (--providers.swarm=true) não registra
+        # `traefik.http.serversTransports.*` vindo de labels — a coleção fica
+        # sempre vazia (/api/http/serverstransports), e o router que referenciava
+        # essa transport ficava "disabled" (servers transport not found). Rota
+        # cai no timeout padrão do entrypoint websecure (idleTimeout 180s,
+        # read/write ilimitados) — como o endpoint não faz streaming parcial
+        # (ver app/api/internal/agents/run/route.ts), uma resposta muito longa
+        # sem nenhum byte de saída ainda corre risco de ser cortada aos 180s
+        # de inatividade. Ver PATCH-ORION.md.
 
 
   # Worker 24/7 do agent-engine (fusão Vendaval) — cérebro do agente SDR.
@@ -43,8 +94,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+    # Variante ORION: Swarm não builda (`docker stack deploy` ignora `build:`),
+    # então usamos uma tag pré-buildada localmente ANTES do deploy (ver
+    # PATCH-ORION.md — `docker build -f Dockerfile.worker -t
+    # deskcommcrm-worker:local .`). Em compose comum, `image:` é ignorado a
+    # favor do `build:` acima quando a imagem ainda não existe localmente.
+    image: ${WORKER_IMAGE:-deskcommcrm-worker:local}
+    # pull_policy:never removido daqui pelo mesmo motivo do app (Swarm rejeita
+    # a chave) — stack_up() já exclui 'worker' do `docker compose pull`
+    # explícito, então ele nunca tenta puxar essa tag local-only de registro.
     restart: unless-stopped
-    env_file: .env
+    # ${ENV_FILE:-.env}: `docker stack deploy` (Swarm) não remove as aspas
+    # simples que o install.sh grava em cada valor do .env (diferente do
+    # `docker compose`, que remove) — os containers receberiam "'valor'"
+    # literal. stack_up() (_common.sh) gera um .env.stack sem aspas e aponta
+    # ENV_FILE pra ele só nesse caminho; compose comum usa .env de sempre.
+    env_file: ${ENV_FILE:-.env}
     environment:
       # dentro da rede do compose, o WAHA é o serviço 'waha' na porta interna 3000
       WAHA_API_BASE_URL: http://waha:3000
@@ -56,6 +121,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    deploy: *default-restart
   waha:
     # Core grátis por padrão; troque para devlikeapro/waha-plus via WAHA_IMAGE se
     # precisar de multi-número/retry/S3 (licença paga).
@@ -78,6 +144,7 @@ services:
       - waha-media:/app/.media
     logging: *default-logging
     networks: [internal]
+    deploy: *default-restart
 
   redis:
     image: redis:7-alpine
@@ -90,6 +157,7 @@ services:
       retries: 3
     logging: *default-logging
     networks: [internal]
+    deploy: *default-restart
 
   srh:
     # serverless-redis-http: fala o REST do Upstash sobre o redis normal, mantendo
@@ -100,20 +168,17 @@ services:
       SRH_MODE: env
       SRH_TOKEN: ${SRH_TOKEN}
       SRH_CONNECTION_STRING: "redis://redis:6379"
-    depends_on:
-      redis:
-        condition: service_healthy
+    depends_on: [redis]
     logging: *default-logging
     networks: [internal]
+    deploy: *default-restart
 
   scheduler:
     # Cron sem docker.sock: alpine + crond interno batendo curl na rede interna.
     # Resolução de 1 min (= paridade com os crons da Vercel).
     image: alpine:3.20
     restart: unless-stopped
-    depends_on:
-      app:
-        condition: service_healthy
+    depends_on: [app]
     environment:
       TZ: UTC
       INTERNAL_SECRET: ${INTERNAL_SECRET}
@@ -127,6 +192,7 @@ services:
         * * * * * curl -fsS -m25 -H "Authorization: Bearer $$INTERNAL_SECRET" http://app:3000/api/v1/cron/followup-flow-worker >/dev/null 2>&1
         * * * * * curl -fsS -m45 -H "Authorization: Bearer $$INTERNAL_SECRET" http://app:3000/api/v1/cron/event-log-drain >/dev/null 2>&1
         * * * * * curl -fsS -m25 -H "Authorization: Bearer $$INTERNAL_SECRET" http://app:3000/api/v1/cron/routing-worker >/dev/null 2>&1
+        * * * * * curl -fsS -m25 -H "Authorization: Bearer $$INTERNAL_SECRET" http://app:3000/api/v1/cron/recover-stuck-messages >/dev/null 2>&1
         */5 * * * * curl -fsS -m25 -H "Authorization: Bearer $$INTERNAL_SECRET" "http://app:3000/api/v1/cron/storage-redaction?limit=50" >/dev/null 2>&1
         */5 * * * * curl -fsS -m25 -H "Authorization: Bearer $$INTERNAL_SECRET" http://app:3000/api/v1/cron/snooze-watcher >/dev/null 2>&1
         */5 * * * * curl -fsS -m25 -H "Authorization: Bearer $$INTERNAL_SECRET" http://app:3000/api/v1/cron/attendant-heartbeat >/dev/null 2>&1
@@ -138,32 +204,28 @@ services:
         exec crond -f -l 2
     logging: *default-logging
     networks: [internal]
+    deploy: *default-restart
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DOMAIN: ${DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data           # certificados Let's Encrypt (persistir!)
-      - caddy-config:/config
-    depends_on:
-      app:
-        condition: service_healthy
-    logging: *default-logging
-    networks: [internal]
+  # Variante ORION: SEM serviço `caddy` — o Traefik já existente nesta VPS
+  # (rede JANet, resolver `letsencryptresolver`) faz TLS/roteamento por
+  # domínio via as labels do serviço `app` acima. Ver PATCH-ORION.md.
+  # No compose vanilla (sem Traefik prévio) este bloco é o `caddy` original —
+  # veja `main`/upstream se precisar dele de volta.
 
 volumes:
   waha-data:
   waha-media:
-  caddy-data:
-  caddy-config:
 
 networks:
   internal:
-    driver: bridge
+    # Swarm só aceita redes de escopo overlay pra serviços ("cannot be used
+    # with services, only overlay-scoped networks"). stack_up() (_common.sh)
+    # exporta INTERNAL_NETWORK_DRIVER=overlay antes do `docker stack deploy`;
+    # em compose comum (sem Swarm) fica bridge, de sempre.
+    driver: ${INTERNAL_NETWORK_DRIVER:-bridge}
+  # Rede overlay do Traefik já existente na VPS (Docker Swarm). Só é usada na
+  # variante ORION — ver PATCH-ORION.md. Precisa já existir no host (é criada
+  # pelo próprio Traefik/SetupOrion, não por este stack).
+  janet:
+    external: true
+    name: JANet

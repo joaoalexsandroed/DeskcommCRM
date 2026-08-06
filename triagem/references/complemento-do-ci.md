@@ -54,16 +54,22 @@ sem RLS passa verde.
 
 ---
 
-## 3. `security definer` exposto a `anon`
+## 3. ~~`security definer` exposto a `anon`~~ — VIROU GATE (issue #128, 2026-08-05)
 
-**Gatilho:** o diff contém `security definer`.
+**Saiu desta lista.** `tests/invariants/hardening-definer-varredura.test.ts` **varre** todas as
+`security definer` de `public` no baseline aplicado e reprova qualquer uma executável por `anon`,
+mais qualquer uma **volátil** executável por `authenticated` sem razão escrita. Roda no job
+`invariants`, que é obrigatório.
 
-**Checagem:** `revoke execute ... from public, anon` + entrada em `DEFINER_WRITE_FNS` de
-`tests/invariants/gov-hardening-anon-definer.test.ts`.
+Fica registrado o que a varredura achou quando entrou, porque é o tamanho do buraco que a lista fixa
+de 6 não via: **8 das 25** funções estavam expostas a `anon` — entre elas
+`fn_publish_ai_agent_version`, que escreve e recebe o org por argumento sem checar membership.
 
-**Por que o CI não pega:** lista fixa de 6 funções. E o `ALTER DEFAULT PRIVILEGES` do baseline
-concede `EXECUTE` a `anon` em **toda função nova** de `public` — um `revoke from public` não cobre
-esse grant. Ou seja: função nova nasce **exposta à anon key pública** e o gate não vê.
+**A armadilha, para quem for escrever função nova:** há DUAS origens de `EXECUTE` e cada uma pede um
+`revoke` diferente. (A) o grant direto a `anon` do `ALTER DEFAULT PRIVILEGES` do baseline, que
+`revoke from public` não remove; (B) o grant a `PUBLIC` que o Postgres dá a toda função ao criá-la,
+que `revoke from anon` não remove. Trate as duas: `revoke execute on function ... from public, anon`
+— e depois re-conceda explicitamente a quem precisa.
 
 ---
 

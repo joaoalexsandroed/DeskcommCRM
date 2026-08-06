@@ -5371,7 +5371,7 @@ end$$;
 
 
 -- ---- trigger de leads sem duplicatas de evento (migration 0043) ----
--- Idempotente (create or replace + drop/create trigger). Ver migrations/20260718160000_0043.
+-- Idempotente (create or replace + drop/create trigger). Ver migrations/20260718160001_0043.
 create or replace function public.fn_emit_event_on_lead_change() returns trigger
     language plpgsql
     set search_path to 'public', 'pg_temp'
@@ -6560,13 +6560,10 @@ revoke all on function fn_publish_followup_flow_version(uuid, uuid, jsonb, uuid)
 
 -- ---- agent_inbox_items: kind 'followup_dead' (migration 0057) ----
 
-alter table agent_inbox_items
-  drop constraint if exists agent_inbox_items_kind_check;
-
-alter table agent_inbox_items
-  add constraint agent_inbox_items_kind_check check (kind in
-    ('qr_rescan','job_dead','event_dead','budget_exceeded','handoff',
-     'promotion_review','judge_unaligned','followup_dead','other'));
+-- A constraint NÃO é reconstruída aqui: o vocabulário desta migration já está
+-- contido no bloco único do fim deste apêndice. Reconstruí-la com a lista da
+-- época quebrava o update.sh de quem já tem linha com kind mais novo (era o
+-- caso deste bloco: 'snooze_expired' e os 4 seguintes ainda não existiam).
 
 -- ---- agent editor: seletor de fluxo de follow-up (migration 0061) ----
 
@@ -6708,10 +6705,8 @@ alter table conversations
 create index if not exists idx_conversations_snooze_until
   on conversations (snooze_until) where snooze_until is not null;
 
-alter table agent_inbox_items drop constraint if exists agent_inbox_items_kind_check;
-alter table agent_inbox_items add constraint agent_inbox_items_kind_check
-  check (kind in ('qr_rescan','job_dead','event_dead','budget_exceeded','handoff',
-                  'promotion_review','judge_unaligned','snooze_expired','other'));
+-- (constraint agent_inbox_items_kind_check: definida uma vez só, no fim deste
+--  apêndice — ver "vocabulário completo". 'snooze_expired' está lá.)
 
 -- ---- notas internas de conversa (migration 0063) ----
 create table if not exists conversation_notes (
@@ -6821,13 +6816,9 @@ alter table cron_jobs add constraint cron_jobs_job_kind_check
 
 -- ---- agent_inbox_items: reconcilia kind check followup_dead+snooze_expired (migration 0065) ----
 
-alter table agent_inbox_items
-  drop constraint if exists agent_inbox_items_kind_check;
-
-alter table agent_inbox_items
-  add constraint agent_inbox_items_kind_check check (kind in
-    ('qr_rescan','job_dead','event_dead','budget_exceeded','handoff',
-     'promotion_review','judge_unaligned','followup_dead','snooze_expired','other'));
+-- (constraint agent_inbox_items_kind_check: definida uma vez só, no fim deste
+--  apêndice — ver "vocabulário completo". Os dois valores desta migration
+--  estão lá.)
 -- ---- memória geral da org: org_memory_versions/pointers/entries (migration 0067) ----
 -- 0067: Memória Geral da Org (Fase 1 do épico harness — spec 2026-07-23).
 -- Doc-mãe versionado (padrão versões-imutáveis+ponteiro do playbook 0004/0050)
@@ -7389,12 +7380,9 @@ update public.crm_lead_activities
 
 alter table public.crm_lead_activities
   drop constraint if exists crm_lead_activities_ai_needs_evidence;
-alter table public.crm_lead_activities
-  add constraint crm_lead_activities_ai_needs_evidence check (
-    actor_kind <> 'ai'
-    or coalesce(jsonb_array_length(evidence->'run_ids'), 0) > 0
-    or coalesce(jsonb_array_length(evidence->'trace_ids'), 0) > 0
-  );
+-- A constraint NÃO é recriada aqui, e sim uma vez só mais abaixo, na versão que
+-- também aceita `llm_call_ids`. Recriá-la com a lista da época derrubava o
+-- update.sh de quem já tem atividade de IA cuja evidência é só `llm_call_ids`.
 
 -- Timeline por ator (o dossiê filtra "só o que a IA fez"), parcial porque a
 -- maioria das linhas não é de agente.
@@ -7481,27 +7469,8 @@ comment on column public.lead_state.next_action_seq is
 -- (sem esse valor) enquanto lib/followup/engine.ts insere exatamente esse kind.
 -- Reconstruir a partir do banco apagaria o valor e mataria, em silêncio, o
 -- aviso de enrollment morto. A fonte de verdade é o arquivo versionado.
-alter table public.agent_inbox_items
-  drop constraint if exists agent_inbox_items_kind_check;
-
-alter table public.agent_inbox_items
-  add constraint agent_inbox_items_kind_check check (
-    kind = any (
-      array[
-        'qr_rescan',
-        'job_dead',
-        'event_dead',
-        'budget_exceeded',
-        'handoff',
-        'promotion_review',
-        'judge_unaligned',
-        'followup_dead',
-        'snooze_expired',
-        'next_action_ambiguous',
-        'other'
-      ]::text[]
-    )
-  );
+-- (constraint agent_inbox_items_kind_check: definida uma vez só, no fim deste
+--  apêndice — ver "vocabulário completo". 'next_action_ambiguous' está lá.)
 
 -- ---- score de probabilidade com evidência, em tabela própria (migrations 0074+0075) ----
 -- O baseline salta o passo intermediário de propósito: quem instala do zero não
@@ -7884,26 +7853,8 @@ comment on function public.fn_update_last_activity_at() is
 -- CHECK e JÁ FICOU TRÊS VALORES ATRÁS DO BANCO sem nada falhar. Kind novo aqui
 -- = kind novo lá, na mesma mudança. Está sendo feito neste commit.
 
-alter table public.agent_inbox_items
-  drop constraint if exists agent_inbox_items_kind_check;
-
-alter table public.agent_inbox_items
-  add constraint agent_inbox_items_kind_check check (
-    kind = any (array[
-      'qr_rescan',
-      'job_dead',
-      'event_dead',
-      'budget_exceeded',
-      'handoff',
-      'promotion_review',
-      'judge_unaligned',
-      'followup_dead',
-      'snooze_expired',
-      'next_action_ambiguous',
-      'risk_backlog_seeded',
-      'other'
-    ]::text[])
-  );
+-- (constraint agent_inbox_items_kind_check: definida uma vez só, no fim deste
+--  apêndice — ver "vocabulário completo". 'risk_backlog_seeded' está lá.)
 
 -- ---- detected_at é carimbo do banco (migration 0081) ----
 -- 0081 — `detected_at` deixa de ser dado do cliente e vira CARIMBO do banco
@@ -8102,27 +8053,8 @@ end $$;
 -- e agora o invariante `vocabulario-banco-x-typescript` LÊ o arquivo de
 -- verdade, então esquecer não passa mais em silêncio.
 
-alter table public.agent_inbox_items
-  drop constraint if exists agent_inbox_items_kind_check;
-
-alter table public.agent_inbox_items
-  add constraint agent_inbox_items_kind_check check (
-    kind = any (array[
-      'qr_rescan',
-      'job_dead',
-      'event_dead',
-      'budget_exceeded',
-      'handoff',
-      'promotion_review',
-      'judge_unaligned',
-      'followup_dead',
-      'snooze_expired',
-      'next_action_ambiguous',
-      'risk_backlog_seeded',
-      'reactivation_expired',
-      'other'
-    ]::text[])
-  );
+-- (constraint agent_inbox_items_kind_check: definida uma vez só, no fim deste
+--  apêndice — ver "vocabulário completo". 'reactivation_expired' está lá.)
 
 -- ---- agent_stage_hint (migration 0084) ----
 -- 0084 — o funil do AGENTE aprende a falar o vocabulário do TENANT
@@ -8772,4 +8704,625 @@ create index if not exists idx_contacts_avatar_refresh
   on public.contacts (avatar_updated_at nulls first)
   where wa_identity is not null and is_anonymized = false;
 
+
+-- ---- autoria da configuração da operação (migration 0101) ----
+-- Quem mexeu na CONFIGURAÇÃO, ao lado do estado que mudou.
+--
+-- ⚠️ POR QUE EXISTE. Até o agente de IA ganhar mãos sobre a operação (épico IA
+-- 360), toda mudança em etapa de funil, entrada automática de contatos e regra
+-- automática vinha de uma pessoa `manager+` — quem olhava a tela era, por
+-- construção, quem tinha mudado. Uma regra automática ligada pelo assistente
+-- muda o comportamento do sistema quando ninguém está olhando: sem esta coluna,
+-- a tela mostra "Ativa" e não diz mais nada. O `api_audit_log` registra, mas
+-- nenhuma tela de configuração o lê — e log que não aparece é log morto
+-- (docs/doctrine/sistema-vivo.md, invariante 3).
+--
+-- ⚠️ NÃO HÁ COLUNA DE "QUAL AGENTE", E É DELIBERADO: `Actor.id` para `ai_agent`
+-- ainda não é chave estável de agente nos três caminhos — `lib/mcp/auth.ts`
+-- devolve o id do RUN ou do TOKEN no caminho do cliente MCP externo —, então uma
+-- FK para `ai_agents(id)` recusaria a escrita com 23503 justamente ali.
+--
+-- Idempotente e auto-curativo: colunas nullable, sem backfill (linha antiga fica
+-- com autoria desconhecida, que é a verdade sobre ela). O CHECK viaja inline no
+-- `add column if not exists` — em banco que já tem a coluna o comando inteiro é
+-- no-op, que é o que o `update.sh` do clone precisa.
+
+alter table public.crm_stages
+  add column if not exists last_change_actor_kind text
+  check (last_change_actor_kind in ('user','ai','system'));
+
+alter table public.crm_stages
+  add column if not exists last_change_at timestamptz;
+
+alter table public.webhook_sources
+  add column if not exists last_change_actor_kind text
+  check (last_change_actor_kind in ('user','ai','system'));
+
+alter table public.webhook_sources
+  add column if not exists last_change_at timestamptz;
+
+alter table public.automation_rules
+  add column if not exists last_change_actor_kind text
+  check (last_change_actor_kind in ('user','ai','system'));
+
+alter table public.automation_rules
+  add column if not exists last_change_at timestamptz;
+
+comment on column public.crm_stages.last_change_actor_kind is
+  'Espécie de quem fez a última mudança de configuração desta etapa: user | ai | system. NULL = anterior à 0101.';
+comment on column public.webhook_sources.last_change_actor_kind is
+  'Espécie de quem fez a última mudança nesta entrada automática de contatos: user | ai | system. NULL = anterior à 0101.';
+comment on column public.automation_rules.last_change_actor_kind is
+  'Espécie de quem ligou/desligou/editou esta regra por último: user | ai | system. NULL = anterior à 0101.';
+
 notify pgrst, 'reload schema';
+
+-- ---- uso das capacidades do agente (migration 0103) ----
+-- Toda chamada de tool do agente já era auditada em api_audit_log
+-- (action='mcp.tool_called') e NENHUMA tela lia — log invisível é log morto
+-- (invariante 3 da doutrina do sistema vivo). Esta função é o leitor.
+--
+-- Vive no banco porque não há FK entre api_audit_log e ai_agent_runs: amarrar os
+-- dois no Node exigiria mandar de volta os ids de ~9.000 runs mensais de um
+-- tenant PME num in(...). O elo é api_audit_log.request_id = ai_agent_runs.id (o
+-- runtime usa o id do run como requestId do McpContext); request_id é text, daí
+-- o cast.
+--
+-- A janela é aplicada nos DOIS lados (r.started_at e a.created_at): os runs saem
+-- de ai_agent_runs_agent_idx, e a data no audit deixa o planner cortar por
+-- idx_audit_action_time em vez de varrer uma tabela que retém 5 anos. Medido em
+-- pg17 com 708.020 linhas de audit (10,2% tool calls) e 36.000 runs, melhor de
+-- 3: sem a janela no audit 345,7 ms · com a janela 224,0 ms · com um índice
+-- parcial dedicado 165,0 ms — o índice NÃO foi adotado, porque api_audit_log é
+-- append-only de escrita altíssima e 60 ms numa aba não pagam manutenção de
+-- índice em todo INSERT.
+--
+-- em_teste separa o que veio de execução de teste (is_dry_run): sem isso a tela
+-- diria "usada 4 vezes" quando as 4 foram o dono clicando em Testar.
+--
+-- security invoker: pelo service role (rota já resolve a org do cookie) a RLS não
+-- se aplica; por usuário autenticado, audit_log_select continua exigindo admin.
+create or replace function public.fn_agent_tool_usage(
+  p_organization_id uuid,
+  p_agent_id        uuid,
+  p_since           timestamptz
+)
+returns table (
+  tool_name  text,
+  total      bigint,
+  falhas     bigint,
+  em_teste   bigint,
+  ultima_vez timestamptz
+)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  select
+    a.metadata->>'tool_name'                                          as tool_name,
+    count(*)::bigint                                                  as total,
+    count(*) filter (where a.metadata->>'success' = 'false')::bigint   as falhas,
+    count(*) filter (where r.is_dry_run)::bigint                       as em_teste,
+    max(a.created_at)                                                 as ultima_vez
+  from public.ai_agent_runs r
+  join public.api_audit_log a
+    on  a.request_id      = r.id::text
+    and a.action          = 'mcp.tool_called'
+    and a.organization_id = p_organization_id
+    and a.created_at     >= p_since
+  where r.organization_id = p_organization_id
+    and r.agent_id        = p_agent_id
+    and r.started_at     >= p_since
+    and a.metadata->>'tool_name' is not null
+  group by 1
+$$;
+
+comment on function public.fn_agent_tool_usage(uuid, uuid, timestamptz) is
+  'Uso das capacidades (tools MCP) de um agente: total, falhas, quantos vieram de execução de teste e a última vez. Elo audit<->run é api_audit_log.request_id = ai_agent_runs.id.';
+
+grant execute on function public.fn_agent_tool_usage(uuid, uuid, timestamptz)
+  to authenticated, service_role;
+-- ---- retorno cancelado ≠ retorno disparado (migration 0102) ----------------
+-- `cron_jobs.enabled = false` significa DUAS coisas: o one-shot disparou ou
+-- alguém desmarcou. Enquanto forem a mesma linha no banco, o agente não sabe, ao
+-- retomar, que o humano cancelou o retorno — o invariante 2 da doutrina
+-- (continuidade humano→IA) fica pela metade — e a fila mostra "concluída" para
+-- um retorno que ninguém executou.
+--
+-- Sem backfill: as linhas antigas ficam com `cancelled_at` nulo porque essa é a
+-- verdade disponível. Não se sabe quais foram canceladas antes desta coluna
+-- existir, e chutar seria gravar ficção em histórico.
+alter table public.cron_jobs
+  add column if not exists cancelled_at  timestamptz,
+  add column if not exists cancel_reason text;
+
+comment on column public.cron_jobs.cancelled_at is
+  'Quando o retorno foi desmarcado. NULL = nunca cancelado (disparou ou ainda vai disparar). Distingue cancelado de disparado, que enabled=false sozinho não distingue.';
+comment on column public.cron_jobs.cancel_reason is
+  'Por que foi desmarcado, em texto curto e sem PII. Mesmo vocabulário de followup_enrollments.cancel_reason.';
+
+create index if not exists idx_cron_jobs_retorno_vivo
+  on public.cron_jobs (organization_id, contact_id, next_run_at)
+  where enabled = true and job_kind = 'followup_turn';
+-- ---- agent_case_events.kind ganha 'agent_noted' (migration 0100) ----
+-- O agente conseguia ABRIR um chamado e nada mais: não havia valor honesto no
+-- CHECK para "o agente registrou o que aconteceu depois" ('lead_provided' é a
+-- informação que o LEAD deu, 'human_replied' é a pessoa). Sem esse registro, o
+-- atendente seguinte que abre o chamado começa do zero.
+-- Idempotente e auto-curativo: a lista só CRESCE, então nenhuma linha existente
+-- viola a constraint nova e não há dado a corrigir antes de criá-la.
+alter table public.agent_case_events
+  drop constraint if exists agent_case_events_kind_check;
+
+alter table public.agent_case_events
+  add constraint agent_case_events_kind_check check (kind in (
+    'opened',
+    'human_replied',
+    'lead_asked',
+    'lead_provided',
+    'lead_unresponsive',
+    'resolved',
+    'escalated',
+    'cancelled',
+    'agent_noted'
+  ));
+
+-- ---- catálogo de modelos atualizado (migration 0104) ----
+-- O catálogo curado estava duas gerações atrás e o kit self-host aplica SÓ o
+-- baseline: sem este apêndice, quem instala numa VPS continua escolhendo entre
+-- modelos velhos e pagando mais caro por pior. Ids verificados no provedor
+-- (GET /v1/models) para Anthropic e OpenAI; os do Google seguem a convenção e
+-- NÃO foram verificados — ver o cabeçalho da migration. Idempotente por
+-- `on conflict do update`.
+
+-- ---------------------------------------------------------------------------
+-- 1. catálogo curado (o que a tela oferece)
+-- ---------------------------------------------------------------------------
+insert into public.ai_models
+  (provider, model_id, display_name, description,
+   input_price_per_million_cents, output_price_per_million_cents, supports_tools)
+values
+  -- Anthropic
+  ('anthropic', 'claude-opus-5',     'Claude Opus 5',
+   'O mais capaz da Anthropic para trabalho agêntico complexo.', 500, 2500, true),
+  ('anthropic', 'claude-sonnet-5',   'Claude Sonnet 5',
+   'Alto desempenho para atendimento e agentes. Preço de introdução ($2/$10 por milhão) até 31/08/2026; depois volta a $3/$15 — reveja este preço nessa data.',
+   200, 1000, true),
+  ('anthropic', 'claude-opus-4-8',   'Claude Opus 4.8',
+   'Geração anterior do Opus.', 500, 2500, true),
+  -- OpenAI
+  ('openai',    'gpt-5.6-sol',       'GPT-5.6 Sol',
+   'O mais capaz da linha 5.6.', 500, 3000, true),
+  ('openai',    'gpt-5.6-terra',     'GPT-5.6 Terra',
+   'Equilíbrio de custo e capacidade da linha 5.6.', 200, 1200, true),
+  ('openai',    'gpt-5.6-luna',      'GPT-5.6 Luna',
+   'O mais barato da linha 5.6, para classificação e tarefas simples.', 20, 120, true),
+  ('openai',    'gpt-5.5',           'GPT-5.5',              null, 500, 3000, true),
+  ('openai',    'gpt-5.5-pro',       'GPT-5.5 Pro',
+   'Raciocínio estendido; custo alto.', 3000, 18000, true),
+  ('openai',    'gpt-5.4',           'GPT-5.4',              null, 250, 1500, true),
+  ('openai',    'gpt-5.4-mini',      'GPT-5.4 Mini',         null, 75, 450, true),
+  ('openai',    'gpt-5.4-nano',      'GPT-5.4 Nano',         null, 20, 125, true),
+  ('openai',    'gpt-5.4-pro',       'GPT-5.4 Pro',
+   'Raciocínio estendido; custo alto.', 3000, 18000, true),
+  -- Google (ids NÃO verificados — ver cabeçalho)
+  ('google',    'gemini-3.1-pro-preview', 'Gemini 3.1 Pro (Preview)',
+   'Prévia; preço sobe para $4/$18 por milhão acima de 200 mil tokens de entrada.', 200, 1200, true),
+  ('google',    'gemini-3.5-flash',  'Gemini 3.5 Flash',     null, 150, 900, true),
+  ('google',    'gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite',
+   'O mais barato da linha Gemini.', 10, 40, true),
+  ('google',    'gemini-2.0-flash',  'Gemini 2.0 Flash',     null, 10, 40, true)
+on conflict (provider, model_id) do update set
+  display_name = excluded.display_name,
+  description = excluded.description,
+  input_price_per_million_cents = excluded.input_price_per_million_cents,
+  output_price_per_million_cents = excluded.output_price_per_million_cents,
+  supports_tools = excluded.supports_tools;
+
+-- Correção de preço nos que JÁ existiam e estavam errados: a saída do
+-- gemini-2.5-pro é $10 (não $5) e a do gemini-2.5-flash é $2,50 (não $1,20).
+-- Preço errado no catálogo vira orçamento errado na tela do cliente.
+update public.ai_models set output_price_per_million_cents = 1000
+ where provider = 'google' and model_id = 'gemini-2.5-pro';
+update public.ai_models set output_price_per_million_cents = 250
+ where provider = 'google' and model_id = 'gemini-2.5-flash';
+
+-- ---------------------------------------------------------------------------
+-- 2. padrão por provedor
+--
+-- O índice `ai_models_one_default_per_provider` é UNIQUE parcial e IMEDIATO:
+-- limpar o padrão anterior tem de vir ANTES de marcar o novo, senão a migration
+-- quebra no meio.
+-- ---------------------------------------------------------------------------
+update public.ai_models set is_default_for_provider = false
+ where provider in ('anthropic', 'openai', 'google') and is_default_for_provider;
+
+update public.ai_models set is_default_for_provider = true
+ where (provider = 'anthropic' and model_id = 'claude-sonnet-5')
+    or (provider = 'openai'    and model_id = 'gpt-5.6-terra')
+    or (provider = 'google'    and model_id = 'gemini-3.5-flash');
+
+-- ---------------------------------------------------------------------------
+-- 3. contabilidade de custo — a MESMA lista, senão o gasto é calculado com
+--    preço de outro modelo (ou não é calculado, que é pior: some do orçamento).
+-- ---------------------------------------------------------------------------
+insert into public.ai_pricing
+  (model, prompt_cents_per_million_tokens, completion_cents_per_million_tokens, notes)
+values
+  ('claude-opus-5',          500,   2500,  'catálogo 0101'),
+  ('claude-sonnet-5',        200,   1000,  'catálogo 0101 — introdução até 31/08/2026; depois 300/1500'),
+  ('claude-opus-4-8',        500,   2500,  'catálogo 0101'),
+  ('gpt-5.6-sol',            500,   3000,  'catálogo 0101'),
+  ('gpt-5.6-terra',          200,   1200,  'catálogo 0101'),
+  ('gpt-5.6-luna',            20,    120,  'catálogo 0101'),
+  ('gpt-5.5',                500,   3000,  'catálogo 0101'),
+  ('gpt-5.5-pro',           3000,  18000,  'catálogo 0101'),
+  ('gpt-5.4',                250,   1500,  'catálogo 0101'),
+  ('gpt-5.4-mini',            75,    450,  'catálogo 0101'),
+  ('gpt-5.4-nano',            20,    125,  'catálogo 0101'),
+  ('gpt-5.4-pro',           3000,  18000,  'catálogo 0101'),
+  ('gemini-3.1-pro-preview', 200,   1200,  'catálogo 0101 — sobe acima de 200k tokens de entrada'),
+  ('gemini-3.5-flash',       150,    900,  'catálogo 0101'),
+  ('gemini-2.5-flash-lite',   10,     40,  'catálogo 0101'),
+  ('gemini-2.0-flash',        10,     40,  'catálogo 0101'),
+  ('gemini-2.5-pro',         125,   1000,  'catálogo 0101 — saída corrigida de 500 para 1000'),
+  ('gemini-2.5-flash',        30,    250,  'catálogo 0101 — saída corrigida de 120 para 250')
+on conflict (model) do update set
+  prompt_cents_per_million_tokens = excluded.prompt_cents_per_million_tokens,
+  completion_cents_per_million_tokens = excluded.completion_cents_per_million_tokens,
+  notes = excluded.notes,
+  superseded_at = null;
+
+-- ---- agent_inbox_items.kind ganha 'capabilities_missing' (migration 0105capabilities_missing
+-- Quando o turno não consegue montar as capacidades configuradas na tela, ele
+-- segue sem elas (a conversa do cliente não pode morrer por uma tool extra) —
+-- mas o aviso ia só para o log do worker, que numa VPS ninguém abre. Este kind
+-- é o que faz o defeito aparecer na Central de avisos. Idempotente: a lista só
+-- cresce, nenhuma linha existente viola a constraint nova.
+
+alter table public.agent_inbox_items
+  drop constraint if exists agent_inbox_items_kind_check;
+
+alter table public.agent_inbox_items
+  add constraint agent_inbox_items_kind_check check (kind in (
+    'qr_rescan',
+    'job_dead',
+    'event_dead',
+    'budget_exceeded',
+    'handoff',
+    'promotion_review',
+    'judge_unaligned',
+    'followup_dead',
+    'snooze_expired',
+    'next_action_ambiguous',
+    'risk_backlog_seeded',
+    'reactivation_expired',
+    'capabilities_missing',
+    -- (migration 0109, issue #129) Mensagem outbound nasce `sending` e, quando o
+    -- envio nunca acontece, fica `sending` para sempre — o self-hoster vê uma
+    -- mensagem eternamente "enviando", sinal de progresso para algo que não vai
+    -- acontecer. O cron `recover-stuck-messages` marca `failed` e usa este kind
+    -- para o defeito APARECER na Central de avisos.
+    --
+    -- Entra NESTA lista, e não num bloco novo no fim do arquivo: o #159 do @jmpo
+    -- mostrou que reconstruir a mesma constraint em N blocos quebra o
+    -- `update.sh` de todo clone que já tenha uma linha de vocabulário posterior
+    -- — os blocos antigos rodam antes e falham em cadeia. Um bloco por
+    -- constraint, vigiado por tests/unit/baseline-constraint-reconstruida.test.ts.
+    'message_send_stuck',
+    'other'
+  ));
+
+notify pgrst, 'reload schema';
+
+-- ---- channel_sessions.archived_at (migration 0106) ----
+-- Arquivar em vez de apagar: conversations/messages referenciam
+-- channel_sessions com ON DELETE RESTRICT, então canal com histórico não pode
+-- ser removido — some da UI e a linha fica como âncora das FKs.
+alter table public.channel_sessions
+  add column if not exists archived_at timestamptz;
+
+create index if not exists channel_sessions_org_active_idx
+  on public.channel_sessions (organization_id, created_at)
+  where archived_at is null;
+
+notify pgrst, 'reload schema';
+
+-- ---- número único só entre canais ATIVOS (migration 0107) ----
+-- A trava `channel_sessions_phone_per_org_unique` é do snapshot e não sabe o que
+-- é arquivamento: a linha arquivada seguia ocupando o par (org, número), e
+-- reparear o MESMO número estourava 23505 na linha nova. O invariante real é "um
+-- número vive em UM canal ATIVO" — vira índice parcial `where archived_at is
+-- null`, com o MESMO NOME (o invariante do repo cobra o nome dentro da mensagem
+-- de erro). Perde o DEFERRABLE: medido, nenhum caminho escreve
+-- channel_sessions.phone_number com violação transitória.
+--
+-- Auto-curativo: a constraint antiga é ESTRITAMENTE mais forte que o índice novo
+-- (todas as linhas vs. um subconjunto), então nenhum banco que a satisfazia pode
+-- violar o índice — não há dado a deduplicar antes de criá-lo.
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.channel_sessions'::regclass
+       and conname = 'channel_sessions_phone_per_org_unique'
+  ) then
+    alter table public.channel_sessions
+      drop constraint channel_sessions_phone_per_org_unique;
+  end if;
+end $$;
+
+create unique index if not exists channel_sessions_phone_per_org_unique
+  on public.channel_sessions (organization_id, phone_number)
+  where archived_at is null;
+
+-- ---- SECURITY DEFINER exposta a anon/authenticated (migration 0108) ----
+-- Issue #128. O `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON FUNCTIONS TO anon`
+-- (e a irmã TO authenticated) lá em cima vale para toda função criada DEPOIS
+-- dele — isto é, para TODO apêndice deste arquivo, que sempre nasce no fim — e
+-- concede grant DIRETO, que `revoke all ... from public` não remove. Copiar as
+-- duas linhas padrão de uma função antiga produz função exposta.
+--
+-- Medido com o baseline da main aplicado: das 25 `security definer` de public,
+-- 8 tinham EXECUTE para anon — incluindo `fn_publish_ai_agent_version`, que
+-- ESCREVE e recebe o org por argumento sem checar membership.
+--
+-- REGRA (vigiada por tests/invariants/hardening-definer-varredura.test.ts):
+--   anon          → nenhuma definer de public executável, sem exceção;
+--   authenticated → definer VOLÁTIL só continua executável com call site de
+--                   sessão de usuário (emit_event, fn_conversation_assign,
+--                   fn_log_event). As demais só são chamadas pelo client de
+--                   service role, e o grant era escrita cross-tenant à toa.
+-- Idempotente e auto-curativo: revoke de privilégio ausente é no-op.
+
+-- ---- anon: nenhuma SECURITY DEFINER de public ----
+-- Duas origens de EXECUTE, e cada uma pede um revoke diferente — medir o ACL
+-- real (`proacl`) foi o que mostrou isso: `{=X/postgres,...}` é grant a PUBLIC,
+-- que `revoke ... from anon` NÃO remove. As duas linhas juntas cobrem os dois
+-- caminhos, e o re-grant explícito devolve quem de fato precisa.
+revoke execute on function public.fn_is_platform_admin() from public, anon;
+revoke execute on function public.fn_user_org_ids() from public, anon;
+revoke execute on function public.fn_user_role_in_org(uuid) from public, anon;
+revoke execute on function public.fn_user_role_in(uuid) from public, anon;
+revoke execute on function public.fn_role_at_least(uuid, text) from public, anon;
+revoke execute on function public.fn_publish_ai_agent_version(uuid, uuid, uuid) from public, anon;
+revoke execute on function public.fn_emit_conversation_routing() from public, anon;
+revoke execute on function public.rls_auto_enable() from public, anon;
+
+-- ---- authenticated: definer volátil sem call site de sessão de usuário ----
+revoke execute on function public.fn_upsert_wa_contact(uuid, text, text, text, text, text) from authenticated;
+revoke execute on function public.fn_upsert_wa_conversation(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.fn_mark_conversation_message(uuid, text, text, timestamptz) from authenticated;
+revoke execute on function public.fn_publish_ai_agent_version(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.activate_kb_version(uuid, uuid) from authenticated;
+-- Funções de TRIGGER: ninguém as chama por RPC, e o disparo do trigger não
+-- consulta EXECUTE. O grant só existia por herança dos padrões do Postgres.
+revoke execute on function public.fn_emit_conversation_routing() from authenticated;
+revoke execute on function public.rls_auto_enable() from authenticated;
+
+-- ---- re-grant explícito: quem precisa continua podendo (probe positivo) ----
+grant execute on function public.fn_upsert_wa_contact(uuid, text, text, text, text, text) to service_role;
+grant execute on function public.fn_upsert_wa_conversation(uuid, uuid, uuid) to service_role;
+grant execute on function public.fn_mark_conversation_message(uuid, text, text, timestamptz) to service_role;
+grant execute on function public.fn_publish_ai_agent_version(uuid, uuid, uuid) to service_role;
+grant execute on function public.activate_kb_version(uuid, uuid) to service_role;
+grant execute on function public.fn_emit_conversation_routing() to service_role;
+grant execute on function public.rls_auto_enable() to service_role;
+-- Helpers de RLS: as policies são avaliadas com o papel de quem consulta, então
+-- `authenticated` PRECISA de EXECUTE — sem isto toda leitura logada quebra.
+grant execute on function public.fn_is_platform_admin() to authenticated, service_role;
+grant execute on function public.fn_user_org_ids() to authenticated, service_role;
+grant execute on function public.fn_user_role_in_org(uuid) to authenticated, service_role;
+grant execute on function public.fn_user_role_in(uuid) to authenticated, service_role;
+grant execute on function public.fn_role_at_least(uuid, text) to authenticated, service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- openrouter como provider LLM (migration 0110) ----
+-- (branch vps-orion, não faz parte do upstream; renumerada de 0093 para 0110
+-- no merge — upstream ocupava até 0109, ver PATCH-ORION.md)
+
+-- 0110 — OpenRouter como provider LLM (BYOK)
+--
+-- OpenRouter agrega centenas de modelos (Anthropic, OpenAI, Google, Meta,
+-- Mistral, DeepSeek, xAI etc.) atrás de UMA chave BYOK — é como a org deixa de
+-- ficar presa aos 3 providers diretos sem multiplicar credenciais. Entra como
+-- provider igual aos outros: mesma tabela de credenciais, mesmo seam
+-- (runModelCall em lib/agent-engine/edge/llm/), sem tabela nova.
+--
+-- ⚠️ `ai_models` NÃO ganha linha por modelo aqui, de propósito: o model_id do
+-- OpenRouter carrega o vendor no prefixo (ex.: "anthropic/claude-sonnet-4-6",
+-- "deepseek/deepseek-v3") e são 300+ modelos — curar isso a mão quebraria o
+-- propósito de "não ficar preso a poucos modelos". O catálogo é buscado AO VIVO
+-- da API da OpenRouter (rota /api/v1/ai/providers/openrouter/models), e por
+-- isso `fn_publish_ai_agent_version` abaixo ganha um desvio: a existência do
+-- modelo em `ai_models` só é exigida para os providers com catálogo curado.
+-- Modelo inválido pro provider openrouter falha no runtime da 1ª chamada (erro
+-- do provider), não no publish — mesmo contrato de "sem tabela = sem curadoria
+-- prévia possível".
+
+alter table public.ai_provider_credentials
+  drop constraint if exists ai_provider_credentials_provider_check;
+alter table public.ai_provider_credentials
+  add constraint ai_provider_credentials_provider_check check (
+    provider = any (array['anthropic', 'openai', 'google', 'openrouter']::text[])
+  );
+
+alter table public.ai_agent_versions
+  drop constraint if exists ai_agent_versions_provider_check;
+alter table public.ai_agent_versions
+  add constraint ai_agent_versions_provider_check check (
+    provider = any (array['anthropic', 'openai', 'google', 'openrouter']::text[])
+  );
+
+alter table public.ai_models
+  drop constraint if exists ai_models_provider_check;
+alter table public.ai_models
+  add constraint ai_models_provider_check check (
+    provider = any (array['anthropic', 'openai', 'google', 'openrouter']::text[])
+  );
+
+create or replace function public.fn_publish_ai_agent_version(p_org_id uuid, p_agent_id uuid, p_version_id uuid)
+returns table(agent_id uuid, version_id uuid, previous_version_id uuid, published_at timestamptz)
+    language plpgsql security definer
+    set search_path to 'public'
+    as $$
+declare
+  v_agent record;
+  v_version record;
+  v_credential record;
+  v_session record;
+  v_model_count integer;
+  v_previous_version_id uuid;
+  v_published_at timestamptz := now();
+begin
+  select a.id, a.organization_id, a.published_version_id, a.archived_at
+    into v_agent
+  from public.ai_agents a
+  where a.id = p_agent_id
+  for update;
+
+  if not found then
+    raise exception 'agent_not_found' using errcode = 'P0001';
+  end if;
+  if v_agent.organization_id <> p_org_id then
+    raise exception 'agent_not_found' using errcode = 'P0001';
+  end if;
+  if v_agent.archived_at is not null then
+    raise exception 'agent_archived' using errcode = 'P0001';
+  end if;
+
+  select v.id, v.organization_id, v.agent_id, v.status, v.provider, v.model,
+         v.credential_id, v.channel_session_id
+    into v_version
+  from public.ai_agent_versions v
+  where v.id = p_version_id
+  for update;
+
+  if not found then
+    raise exception 'version_not_found' using errcode = 'P0001';
+  end if;
+  if v_version.agent_id <> p_agent_id or v_version.organization_id <> p_org_id then
+    raise exception 'version_not_found' using errcode = 'P0001';
+  end if;
+  if v_version.status not in ('draft', 'superseded') then
+    raise exception 'version_invalid_state' using errcode = 'P0001';
+  end if;
+
+  if v_version.credential_id is null then
+    raise exception 'credential_missing' using errcode = 'P0001';
+  end if;
+
+  select c.id, c.organization_id, c.provider, c.is_active, c.validated_at
+    into v_credential
+  from public.ai_provider_credentials c
+  where c.id = v_version.credential_id;
+
+  if not found or v_credential.organization_id <> p_org_id then
+    raise exception 'credential_not_found' using errcode = 'P0001';
+  end if;
+  if not v_credential.is_active then
+    raise exception 'credential_inactive' using errcode = 'P0001';
+  end if;
+  if v_credential.validated_at is null then
+    raise exception 'credential_not_validated' using errcode = 'P0001';
+  end if;
+  if v_credential.provider <> v_version.provider then
+    raise exception 'credential_provider_mismatch' using errcode = 'P0001';
+  end if;
+
+  select s.id, s.organization_id, s.status
+    into v_session
+  from public.channel_sessions s
+  where s.id = v_version.channel_session_id;
+
+  if not found or v_session.organization_id <> p_org_id then
+    raise exception 'channel_session_not_found' using errcode = 'P0001';
+  end if;
+  if v_session.status <> 'WORKING' then
+    raise exception 'channel_session_offline' using errcode = 'P0001';
+  end if;
+
+  -- openrouter não tem catálogo curado em ai_models (300+ modelos, buscados ao
+  -- vivo da API — ver comentário acima): a checagem de existência só se aplica
+  -- aos providers com catálogo curado.
+  if v_version.provider <> 'openrouter' then
+    select count(*)
+      into v_model_count
+    from public.ai_models m
+    where m.provider = v_version.provider
+      and m.model_id = v_version.model
+      and m.deprecated_at is null;
+
+    if v_model_count = 0 then
+      raise exception 'model_not_found' using errcode = 'P0001';
+    end if;
+  end if;
+
+  v_previous_version_id := v_agent.published_version_id;
+
+  if v_previous_version_id is not null and v_previous_version_id <> p_version_id then
+    update public.ai_agent_versions
+       set status = 'superseded', superseded_at = v_published_at
+     where id = v_previous_version_id;
+  end if;
+
+  update public.ai_agent_versions
+     set status = 'published',
+         published_at = v_published_at,
+         superseded_at = null
+   where id = p_version_id;
+
+  update public.ai_agents
+     set published_version_id = p_version_id,
+         updated_at = v_published_at
+   where id = p_agent_id;
+
+  return query
+    select p_agent_id, p_version_id, v_previous_version_id, v_published_at;
+end;
+$$;
+
+comment on function public.fn_publish_ai_agent_version(uuid, uuid, uuid) is
+  'EPIC-13 S-13.06 (fixed in 0025): atomic Save/Publish flip. Column refs qualified to avoid ambiguity with RETURNS TABLE OUT params. Migration 0110: pula a checagem de ai_models para provider=openrouter (catálogo não curado, buscado ao vivo).';
+
+-- ---- backfill de channel_sessions REMOVED + fecha constraint (migration 0111) ----
+-- *(branch vps-orion, não faz parte do upstream)* Ver cabeçalho da migration
+-- 0111 para o motivo completo. Idempotente: reaplicar não acha mais linha
+-- 'REMOVED' (resolvida na primeira passada) nem a constraint antiga (o
+-- drop/add abaixo já converge para o estado final em qualquer execução).
+
+do $$
+declare
+  v_id uuid;
+  v_tem_algo boolean;
+begin
+  for v_id in select id from public.channel_sessions where status = 'REMOVED' loop
+    select exists (
+      select 1 from public.conversations where channel_session_id = v_id
+      union all select 1 from public.messages where channel_session_id = v_id
+      union all select 1 from public.ai_agent_versions where channel_session_id = v_id
+      union all select 1 from public.ai_routers where channel_session_id = v_id
+      union all select 1 from public.channel_knobs where channel_session_id = v_id
+      union all select 1 from public.before_send_traces where channel_session_id = v_id
+    ) into v_tem_algo;
+
+    if v_tem_algo then
+      update public.channel_sessions
+         set archived_at = now(),
+             status = 'STOPPED',
+             last_status_change_at = now()
+       where id = v_id;
+    else
+      delete from public.channel_sessions where id = v_id;
+    end if;
+  end loop;
+end $$;
+
+alter table public.channel_sessions
+  drop constraint if exists channel_sessions_status_check;
+alter table public.channel_sessions
+  add constraint channel_sessions_status_check check (
+    status = any (array['STARTING', 'SCAN_QR_CODE', 'WORKING', 'STOPPED', 'FAILED']::text[])
+  );

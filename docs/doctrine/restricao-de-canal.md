@@ -46,7 +46,11 @@ if (!caps.freeformOutsideWindow) { /* ... */ }
 - **Por quê:** cada `if (provider === ...)` é uma chance de alguém escrever o ramo novo e
   esquecer o antigo. É assim que uma implementação regride a outra.
 - **Verificação:** `scripts/lint-channels.ts` reprova o vazamento no `gov:verify`. Provider
-  novo não exige tocar em feature nenhuma.
+  novo não exige tocar em feature nenhuma. O reconhecimento do nome mora em
+  `scripts/lint-channels.pattern.ts` — separado justamente para poder ser testado, porque o
+  lint em si varre disco e chama `process.exit` ao ser importado. São **duas** fronteiras,
+  uma por grafia (`waha_session_name` / `WAHA_API_KEY` vs. `WahaClient`); a #118 mostrou que
+  uma catraca que enxerga só uma delas dá verde afirmando o que não verificou.
 
 ### 2. Toda restrição declara ORIGEM e FÍSICA
 

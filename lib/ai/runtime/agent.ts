@@ -25,6 +25,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText, stepCountIs, type LanguageModel, type StopCondition, type ToolSet } from "ai";
 
 import { CredentialUnavailableError, loadCredential } from "@/lib/ai/credentials";
@@ -139,6 +140,14 @@ function buildModel(provider: string, apiKey: string, modelId: string): Language
       return createOpenAI({ apiKey })(modelId);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelId);
+    case "openrouter":
+      // Mesmo padrão dos outros três aqui (sem o allowlistedFetch de
+      // lib/agent-engine/edge/llm/providers.ts — este runtime é @deprecated e
+      // não tem a contenção de egress F4-03). Achado em produção: "Testar
+      // agente" chama runAgent() (este arquivo), não o runtime canônico —
+      // toda versão com provider=openrouter falhava com unsupported_provider
+      // até este case existir, mesmo já suportado no runtime canônico.
+      return createOpenRouter({ apiKey })(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }
@@ -340,11 +349,18 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 
     const auth: McpAuthResult = {
       organizationId: run.organization_id,
-      role: "agent",
+      role: "ai_operator",
       actor: {
         type: "ai_agent",
+        // `id` é o RUN — é o que correlaciona a chamada de tool com o turno no
+        // audit. `agent_id` é a linha em `ai_agents`, e é a única que pode ir
+        // para `crm_lead_activities.actor_agent_id` (FK). Enquanto só existia
+        // `id`, toda tool de escrita chamada por este runtime perdia a atividade
+        // na FK: o lead mudava e a timeline não registrava. Ver `Actor` em
+        // lib/api/handlers/types.ts.
         id: run.id,
-        role: "agent",
+        agent_id: run.agent_id,
+        role: "ai_operator",
         api_token_id: ephemeral.id,
       },
       apiTokenId: ephemeral.id,
@@ -353,12 +369,12 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         "mcp:write",
         "actor:ai_agent",
         `agent_run:${run.id}`,
-        "role:agent",
+        "role:ai_operator",
       ],
     };
     const ctx: McpContext = {
       organizationId: run.organization_id,
-      role: "agent",
+      role: "ai_operator",
       actor: auth.actor,
       apiTokenId: ephemeral.id,
       requestId: run.id,
@@ -535,6 +551,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
         supabase: admin,
         organizationId: run.organization_id,
         runId: run.id,
+        agentId: run.agent_id,
         conversationId: run.conversation_id,
         text: finalText,
         requestId: run.id,

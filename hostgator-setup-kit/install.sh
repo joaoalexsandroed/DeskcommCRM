@@ -440,18 +440,10 @@ dono_das_portas() {  # dono_das_portas  < linhas   → ecoa "nome|projeto|imagem
   return 1
 }
 
-# O nome que o docker compose dá ao projeto quando ninguém passa -p: basename do
-# diretório, minúsculo, só [a-z0-9_-] — E com os `_`/`-` do INÍCIO aparados
-# (NormalizeProjectName faz TrimLeft). Sem essa aparada, uma pasta como
-# `/root/_deskcomm` faz o kit calcular `_deskcomm` enquanto os contêineres
-# carregam `deskcomm`: a instalação deixa de se reconhecer e passa a se tratar
-# como intrusa. Medido contra o docker compose v2.38.2 em `_deskcomm`,
-# `-deskcomm`, `_-_crm` e `_123` — todos divergiam.
-nome_do_projeto_compose() {  # nome_do_projeto_compose <diretório>
-  local n
-  n="$(basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
-  printf '%s' "${n#"${n%%[!_-]*}"}"
-}
+# `nome_do_projeto_compose` e a checagem da rede externa do proxy vivem em
+# _common.sh: o update.sh precisa das mesmas duas coisas e duplicá-las era
+# garantir que uma das cópias envelhecesse. Este arquivo as usa depois do
+# `source` do bloco 2 (nada acima dele depende delas).
 
 # A pergunta que decide é "o Docker consegue publicar a porta?", e a resposta
 # vem de TENTAR — não de inferir. Toda heurística sobre `docker port` ou `ss`
@@ -488,6 +480,82 @@ eh_traefik() {  # eh_traefik <imagem> <nome>
     *traefik*) return 0;;
   esac
   return 1
+}
+
+# O ÚNICO Traefik de uma lista do `docker ps` — e só quando é único.
+#
+# Existe porque a busca por porta publicada NÃO enxerga proxy em modo host:
+# compartilhando a stack de rede da máquina, ele ouve 80/443 sem publicar nada e
+# a coluna Ports do `docker ps` sai VAZIA. Medido no docker 28.3.2: um contêiner
+# em `--network host` sai com Ports=[] mesmo subido com `-p 80:80` (o daemon
+# avisa "Published ports are discarded when using host network mode"); controle
+# positivo, o mesmo nginx numa bridge com `-p 8080:80` sai com
+# "0.0.0.0:8080->80/tcp". É o caso da Hostinger, e sem este caminho o dono das
+# portas fica "não identificado" — a instalação morre no painel de bloqueio.
+#
+# Falha FECHADA no plural: com dois Traefiks não dá para saber qual está com as
+# portas, e chutar publica o CRM atrás do proxy errado — um site que "instala com
+# sucesso" e não responde. Nesse caso ninguém é eleito e o painel de bloqueio, que
+# ao menos diz o que fazer, volta a ser o desfecho.
+unico_traefik() {  # unico_traefik  < linhas "nome|projeto|imagem|portas"  → ecoa "nome|projeto|imagem"
+  local nome proj img ports achado="" n=0
+  while IFS='|' read -r nome proj img ports; do
+    [ -n "$nome" ] || continue
+    eh_traefik "$img" "$nome" || continue
+    achado="$nome|$proj|$img"; n=$((n + 1))
+  done
+  [ "$n" = 1 ] || return 1
+  printf '%s' "$achado"
+}
+
+# Qual rede gravar em TRAEFIK_NETWORK. Isolada do Docker para poder ser
+# exercitada: é aqui que moram DUAS conclusões opostas, e cada uma já foi a
+# única implementada em algum momento do kit.
+#
+#   Traefik numa bridge PRÓPRIA  → a rede dele (o app é anexado a ela).
+#     Medido com Traefik v3.3 real: com o label apontando para a rede do projeto
+#     a requisição fica em HTTP 000 (timeout) mesmo com o contêiner nas duas
+#     redes; só apontando para a rede do PROXY vira HTTP 200.
+#
+#   Traefik em modo HOST         → uma bridge NOSSA, que o instalador cria.
+#     Aqui o proxy não está em rede nenhuma do Docker (`.NetworkSettings.Networks`
+#     devolve a string "host", que existe no `docker network ls` mas com driver
+#     `host` e não aceita contêiner junto de uma bridge). Compartilhando a stack
+#     do host ele alcança qualquer bridge por IP — medido nesta máquina: contêiner
+#     em `--network host` faz `curl` no IP de um contêiner numa bridge separada e
+#     recebe HTTP 200. Então a rede a apontar é uma bridge onde o app esteja, e
+#     usamos uma dedicada em vez da `_internal` do projeto por dois motivos
+#     medidos: (1) o compose recusa `external` apontando para a rede que ele
+#     mesmo criaria — "network <projeto>_internal declared as external, but could
+#     not be found" numa instalação nova; (2) a `internal` tem o redis SEM SENHA,
+#     e a rede do proxy é a única que um dia pode receber contêiner de fora.
+rede_do_traefik() {  # rede_do_traefik <NetworkMode do contêiner> <redes do contêiner> <bridge do projeto>
+  local netmode="${1:-}" redes="${2:-}" nossa="${3:-}"
+  [ "$netmode" = host ] && { printf '%s' "$nossa"; return 0; }
+  printf '%s' "$redes" | awk '{print $1}'
+}
+
+# Um Traefik eleito pela varredura de MODO HOST é suspeita, não prova. A eleição
+# por porta publicada tem a evidência na mão — a coluna Ports diz `:80->`. A
+# varredura por `--network host` não tem nenhuma: em modo host a coluna sai vazia
+# para TODO mundo, então o que ela responde é "existe um único Traefik em modo
+# host nesta máquina", e não "é ele quem está com as portas". Basta um nginx ou
+# apache NATIVO segurando 80/443 e um Traefik em modo host servindo outra coisa
+# para o instalador publicar o CRM atrás de um proxy que não atende: "instalou
+# com sucesso" e o site mudo — o desfecho silencioso que este bloco inteiro
+# existe para evitar.
+#
+# Fechado na AÇÃO, aberto na INFORMAÇÃO: quem está na frente do terminal
+# confirma (e a pergunta diz o que foi encontrado); quem rodou --yes leva uma
+# recusa que ensina a saída, que é declarar REVERSE_PROXY=traefik no .env. A
+# declaração explícita continua valendo — ali a escolha é de quem instala, não
+# um chute do instalador.
+# Ecoa: segue | pergunta | recusa
+confianca_no_dono_das_portas() {  # confianca_no_dono_das_portas <veio_da_varredura_host> <noninteractive>
+  local varredura="${1:-0}" nao_interativo="${2:-0}"
+  [ "$varredura" = 1 ] || { printf 'segue'; return 0; }
+  [ "$nao_interativo" = 1 ] && { printf 'recusa'; return 0; }
+  printf 'pergunta'
 }
 
 # Esconde o miolo de um segredo para a tela de conferência.
@@ -629,7 +697,7 @@ fi
 # Caddy está de pé publicando 80/443, e tratá-lo como "outro proxy" mataria a
 # idempotência — que é justamente o que permite rodar de novo para corrigir uma
 # resposta errada.
-proj_atual="${COMPOSE_PROJECT_NAME:-$(nome_do_projeto_compose "$PROJECT_DIR")}"
+proj_atual="$(nome_do_projeto_atual)"
 
 portas_ocupadas=""; n_ocupadas=0
 porta_publicavel 80  || { portas_ocupadas="80"; n_ocupadas=1; }
@@ -651,6 +719,27 @@ if [ -n "$portas_ocupadas" ]; then
   unset _dono
 fi
 
+# Ninguém PUBLICA as portas, mas elas estão ocupadas: o candidato é um proxy em
+# modo host, que ouve 80/443 pela stack de rede da máquina e por isso sai com a
+# coluna Ports vazia (a medição está em `unico_traefik`). Sem este ramo o dono
+# ficava "não identificado" e a instalação parava no painel de bloqueio — que
+# manda pôr REVERSE_PROXY=traefik no .env, caminho que também morria adiante.
+# É exatamente a VPS Hostinger da issue #139.
+#
+# A eleição fica MARCADA: quem veio daqui não tem a coluna Ports como prova, e o
+# `case` abaixo trata essa diferença (ver `confianca_no_dono_das_portas`).
+dono_por_varredura_host=0
+if [ -n "$portas_ocupadas" ] && [ -z "$dono_portas" ]; then
+  _host="$(docker ps --filter network=host --format '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Image}}|{{.Ports}}' 2>/dev/null | unico_traefik || true)"
+  if [ -n "$_host" ]; then
+    dono_portas="${_host%%|*}"; _resto="${_host#*|}"
+    dono_projeto="${_resto%%|*}"; dono_imagem="${_resto#*|}"
+    dono_por_varredura_host=1
+    unset _resto
+  fi
+  unset _host
+fi
+
 # Inicializado sempre: o bloco da rede do Traefik, mais abaixo, lê esta variável
 # sem default, e sob `set -u` uma instalação que já traz REVERSE_PROXY=traefik no
 # .env (portanto sem passar pela detecção) morreria com "unbound variable".
@@ -666,6 +755,35 @@ if [ -z "${REVERSE_PROXY:-}" ]; then
     [ -n "$portas_ocupadas" ] && c_dim "  (as portas 80/443 já estão com esta instalação — seguindo)"
     ;;
   traefik)
+    # O porquê de a varredura por modo host não bastar sozinha está em
+    # `confianca_no_dono_das_portas`.
+    case "$(confianca_no_dono_das_portas "$dono_por_varredura_host" "$NONINTERACTIVE")" in
+    pergunta)
+      c_ylw "⚠ As portas ${portas_ocupadas} estão ocupadas, mas NENHUM contêiner as publica."
+      c_ylw "  O único Traefik em modo host aqui é '${dono_portas}'${dono_imagem:+ (imagem ${dono_imagem})}."
+      printf '\n%s\n'   "  Em modo host o Docker não mostra as portas, então não consigo PROVAR que é ele"
+      printf '%s\n\n'   "  quem atende o seu domínio — poderia ser um nginx/apache instalado no servidor."
+      printf '%s\n'     "  Se for ele, o CRM sai publicado por ele e tudo funciona."
+      printf '%s\n\n'   "  Se não for, o site vai subir e não responder — sem erro nenhum na tela."
+      if ! read -r -p "  É o '${dono_portas}' que atende o seu site? (s/N) " _r; then _r=""; fi
+      if ! resposta_sim "$_r"; then
+        die "Ok, não vou arriscar. Descubra quem está com as portas 80/443 (ex.: 'ss -ltnp | grep :80')
+e, se for mesmo um Traefik, ponha REVERSE_PROXY=traefik no .env e rode de novo."
+      fi
+      unset _r
+      ;;
+    recusa)
+      c_red "✖ As portas ${portas_ocupadas} estão ocupadas, mas NENHUM contêiner as publica."
+      printf '\n%s\n'   "  O único Traefik em modo host aqui é '${dono_portas}'${dono_imagem:+ (imagem ${dono_imagem})},"
+      printf '%s\n\n'   "  e em modo host o Docker não mostra porta — não dá para provar que é ele quem atende."
+      printf '%s\n'     "  Publicar o CRM atrás do proxy errado instala 'com sucesso' um site que não responde,"
+      printf '%s\n\n'   "  então em modo --yes eu paro aqui em vez de chutar."
+      printf '%s\n'     "  É esse Traefik mesmo? Ponha no .env e rode de novo:"
+      printf '%s\n\n'   "       REVERSE_PROXY=traefik"
+      printf '%s\n'     "  Não é? Confira quem está com as portas: ss -ltnp | grep -E ':80|:443'"
+      die "Não consigo identificar com certeza o dono das portas ${portas_ocupadas} em modo --yes."
+      ;;
+    esac
     REVERSE_PROXY=traefik
     traefik_container="$dono_portas"
     c_ylw "⚠ Detectei um Traefik já rodando neste VPS (contêiner '${dono_portas}', ocupando 80/443)."
@@ -701,6 +819,25 @@ if [ -z "${REVERSE_PROXY:-}" ]; then
     die "Libere a porta ${portas_ocupadas} (ou use a instalação que já existe) e rode de novo."
     ;;
   esac
+fi
+
+# Fica FORA do `case` porque quem põe REVERSE_PROXY=traefik no .env à mão — o
+# caminho que o painel de bloqueio logo acima ENSINA — pula o `case` inteiro e
+# chegava no bloco da rede com a variável vazia, para morrer em "Não consegui
+# descobrir a rede Docker do seu Traefik". O instalador mandava fazer uma coisa
+# que ele mesmo não sabia terminar.
+if [ "${REVERSE_PROXY:-}" = "traefik" ] && [ -z "$traefik_container" ]; then
+  if [ -n "$dono_portas" ] && eh_traefik "$dono_imagem" "$dono_portas"; then
+    traefik_container="$dono_portas"
+  else
+    # Nem dono das portas nem modo host: o Traefik pode simplesmente estar
+    # parado agora (painel reiniciando, VPS recém-ligada). Procurá-lo entre
+    # TODOS os contêineres é o que resta — e continua fechado no plural, porque
+    # apontar para o Traefik errado publica o CRM num proxy que ninguém acessa.
+    _tk="$(docker ps --format '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Image}}|{{.Ports}}' 2>/dev/null | unico_traefik || true)"
+    [ -n "$_tk" ] && traefik_container="${_tk%%|*}"
+    unset _tk
+  fi
 fi
 
 # ── Supabase automático (opcional) ──────────────────────────────────────────
@@ -751,6 +888,13 @@ FIELDS=(
   "OWNER_PASSWORD|Senha do primeiro admin (mínimo 8 caracteres)||v_password|secret|"
   "APP_NAME|Nome que aparece na interface (Enter para o padrão)|DeskcommCRM|||"
 )
+
+# Nesta VPS (variante ORION) quem emite o SSL é o Traefik já existente, com o
+# e-mail dele próprio — o ACME_EMAIL daqui não é usado. Vira opcional pra não
+# confundir quem estiver instalando (ver PATCH-ORION.md).
+if is_orion_vps; then
+  FIELDS[1]="ACME_EMAIL|Seu e-mail (não usado nesta VPS — o Traefik já existente cuida do SSL; Enter pula)||v_email||opcional"
+fi
 
 field_at() { IFS='|' read -r F_VAR F_PROMPT F_DEF F_VAL F_SEC F_OPT <<< "${FIELDS[$1]}"; }
 
@@ -835,25 +979,35 @@ UPSTASH_REDIS_REST_TOKEN="$SRH_TOKEN"
 c_grn "✓ segredos prontos"
 
 # ── 5. Escreve .env (600) ───────────────────────────────────────────────────
-# A rede em que o Traefik REALMENTE está. Antes isto era calculado como
-# "<pasta>_internal", ou seja, a rede do PRÓPRIO projeto — e aí nada funcionava:
-# o Traefik não alcança uma bridge que não é dele, e o label `traefik.docker.network`
-# apontando pra lá faz ele mirar um IP inalcançável mesmo com o contêiner conectado
-# nas duas redes. Medido com Traefik v3.3 real: só com o label apontando pra rede do
-# PROXY a requisição sai de HTTP 000 (timeout) para HTTP 200.
+# Onde o Traefik encontra o app. Os dois cenários e as duas medições que os
+# separam estão em `rede_do_traefik`; aqui só se busca no Docker o que ela pede.
+#
+# A bridge reservada a este projeto sai de `rede_reservada_do_proxy` (_common.sh),
+# que usa o mesmo nome que o compose calcula (NormalizeProjectName: minúsculas, só
+# [a-z0-9_-], `_`/`-` iniciais aparados). Um `basename` cru diverge numa pasta com
+# maiúscula, ponto ou underscore inicial — e aí o instalador cria uma rede e o
+# compose procura outra.
+rede_do_projeto="$(rede_reservada_do_proxy)"
 if [ "$REVERSE_PROXY" = "traefik" ] && [ -z "${TRAEFIK_NETWORK:-}" ] && [ -n "$traefik_container" ]; then
-  # "|| true": sem ele o `die` explicativo logo abaixo — que é o tratamento
-  # CERTO deste caso — é inalcançável. Numa atribuição o status do pipeline vira
-  # o status do script; se o painel da hospedagem recriou o proxy entre a
-  # detecção e aqui, o docker inspect sai 1, o 2>/dev/null engole a mensagem e o
-  # instalador cai no painel genérico de erro sem dizer o que houve.
-  TRAEFIK_NETWORK="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$traefik_container" 2>/dev/null | awk '{print $1}' || true)"
+  # "|| true" nas duas: sem ele o `die` explicativo logo abaixo — que é o
+  # tratamento CERTO deste caso — é inalcançável. Numa atribuição o status do
+  # pipeline vira o status do script; se o painel da hospedagem recriou o proxy
+  # entre a detecção e aqui, o docker inspect sai 1, o 2>/dev/null engole a
+  # mensagem e o instalador cai no painel genérico de erro sem dizer o que houve.
+  traefik_netmode="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$traefik_container" 2>/dev/null || true)"
+  traefik_redes="$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$traefik_container" 2>/dev/null || true)"
+  TRAEFIK_NETWORK="$(rede_do_traefik "$traefik_netmode" "$traefik_redes" "$rede_do_projeto")"
+  [ "$traefik_netmode" = "host" ] && \
+    c_dim "  (o Traefik roda em modo host, então o CRM publica numa rede própria: ${TRAEFIK_NETWORK})"
 fi
 if [ "$REVERSE_PROXY" = "traefik" ] && [ -z "${TRAEFIK_NETWORK:-}" ]; then
   die "Não consegui descobrir a rede Docker do seu Traefik. Rode 'docker network ls',
 identifique a rede dele e ponha TRAEFIK_NETWORK=<nome> no .env antes de tentar de novo."
 fi
-TRAEFIK_NETWORK="${TRAEFIK_NETWORK:-traefik}"
+# Confere (e cria, quando a rede é a nossa) — em _common.sh, porque o update.sh
+# precisa da mesma garantia antes do `dc up -d` dele. Também aplica o default
+# 'traefik', então a variável está pronta para o .env logo abaixo.
+garantir_rede_do_proxy
 
 # ── Telemetria: perguntar, não presumir ─────────────────────────────────────
 # Issue #100. Antes, quem não definisse SENTRY_DSN mandava relatório de erro pro
@@ -898,13 +1052,21 @@ umask 077
   envq APP_IMAGE "$APP_IMAGE"
   envq APP_PULL_POLICY "always"
   envq DOMAIN "$DOMAIN"
-  envq ACME_EMAIL "$ACME_EMAIL"
+  # Opcional: quando esta VPS já tem Traefik/Swarm (variante ORION), quem emite
+  # o SSL é o Traefik já existente, com o e-mail dele próprio.
+  envq ACME_EMAIL "${ACME_EMAIL:-}"
   printf '# Proxy reverso: "caddy" (o kit sobe o dele nas portas 80/443) ou "traefik"\n'
   printf '# (o VPS já tem um Traefik nessas portas — Hostinger, Coolify, Dokploy...).\n'
   printf '# Em "traefik" entra o docker-compose.traefik.yml, que desliga o Caddy e\n'
   printf '# publica o app por labels. TRAEFIK_* só é lido nesse modo.\n'
   envq REVERSE_PROXY "$REVERSE_PROXY"
-  envq TRAEFIK_NETWORK "$TRAEFIK_NETWORK"
+  # O default mora aqui, junto dos irmãos TRAEFIK_* logo abaixo, e não numa
+  # atribuição solta lá atrás: em modo caddy ninguém DECIDE esta variável, e
+  # depender de uma linha distante para ela existir é o tipo de laço que um
+  # refactor do bloco de proxy corta sem perceber. Com `set -u` o preço é a VPS
+  # limpa — a instalação mais comum de todas — parar aqui e deixar o .env pela
+  # metade, com o bloco do Traefik verde em todos os testes.
+  envq TRAEFIK_NETWORK "${TRAEFIK_NETWORK:-traefik}"
   envq TRAEFIK_ENTRYPOINT_HTTP "${TRAEFIK_ENTRYPOINT_HTTP:-web}"
   envq TRAEFIK_ENTRYPOINT "${TRAEFIK_ENTRYPOINT:-websecure}"
   envq TRAEFIK_CERTRESOLVER "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
@@ -1114,9 +1276,15 @@ SQL
 
 # ── 9. Sobe a stack ─────────────────────────────────────────────────────────
 fase 4 "Colocando o CRM no ar"
-step "Puxando a imagem e subindo os serviços"
-dc pull
-dc up -d
+# Detecta sozinho se esta VPS já tem Traefik/Swarm (variante ORION — ver
+# PATCH-ORION.md): nesse caso builda o worker e sobe via `docker stack
+# deploy` na rede JANet; senão, `docker compose up -d` de sempre.
+if is_orion_vps; then
+  step "Rede JANet encontrada — subindo via Docker Stack (Traefik já existente nesta VPS)"
+else
+  step "Puxando a imagem e subindo os serviços"
+fi
+stack_up
 c_grn "✓ containers no ar"
 
 # ── 10. Healthcheck ─────────────────────────────────────────────────────────
@@ -1126,6 +1294,8 @@ step "Aguardando o app ficar saudável"
 # "Instalação concluída!" saía logo atrás, incondicionalmente. Um falso verde
 # no exato momento em que a pessoa decide se confia no produto. Agora o critério
 # é o mesmo do update.sh: a rota /api/v1/health responder "status":"ok".
+# wait_app_healthy já é Swarm-aware por baixo (usa app_exec/app_health_probe
+# em _common.sh, que resolvem o container certo em qualquer variante).
 if health_body="$(wait_app_healthy 30 3)"; then
   APP_SAUDAVEL=1
   c_grn "✓ app no ar e saudável"
@@ -1215,8 +1385,25 @@ $(c_grn "  ─── A comunidade ───────────────�
 
   Telemetria: por padrão os erros desta instalação são enviados ao Sentry do
   projeto, o que ajuda a corrigir falhas que afetam todo mundo. Para desligar,
-  ponha SENTRY_DSN='off' no .env e rode: docker compose $(dc_files) up -d
+  ponha SENTRY_DSN='off' no .env e rode o comando de "reiniciar" abaixo.
 
+DONE
+
+if is_orion_vps; then
+  cat <<DONE
+  Comandos úteis (variante ORION — Traefik/Swarm já existente nesta VPS):
+    ver logs:      docker service logs -f ${STACK_NAME}_app
+    reiniciar:     docker service update --force ${STACK_NAME}_app
+    atualizar:     bash hostgator-setup-kit/update.sh
+    backup:        bash hostgator-setup-kit/backup.sh
+    trocar config: bash hostgator-setup-kit/install.sh
+                   (mostra tudo o que você respondeu e deixa corrigir por número)
+    recomeçar:     docker stack rm ${STACK_NAME} && rm -f .env
+                   (derruba tudo; depois rode o install.sh de novo)
+
+DONE
+else
+  cat <<DONE
   Comandos úteis:
     ver logs:      docker compose $(dc_files) logs -f app
     reiniciar:     docker compose $(dc_files) restart
@@ -1228,3 +1415,4 @@ $(c_grn "  ─── A comunidade ───────────────�
                    (derruba tudo; depois rode o install.sh de novo)
 
 DONE
+fi

@@ -48,3 +48,32 @@ export function costCents(model: string, usage: TokenUsage): number | null {
     1_000_000;
   return usd * 100;
 }
+
+/**
+ * OpenRouter é a EXCEÇÃO à tabela acima: agrega 300+ modelos de dezenas de
+ * vendors (migration 0093) — manter uma linha por modelo aqui não escala e
+ * ficaria desatualizado a cada modelo novo do catálogo. Em vez de tabela,
+ * pedimos o custo REAL de volta na própria resposta (`usage: {include: true}`
+ * no factory de providers.ts) e lemos aqui. Shape documentado pelo
+ * `@openrouter/ai-sdk-provider`: `providerMetadata.openrouter.usage.cost` em
+ * USD. Ausente/shape inesperado → null (mesmo contrato de "modelo sem preço
+ * conhecido não consome teto" do costCents acima).
+ */
+export function openrouterCostCents(providerMetadata: unknown): number | null {
+  if (providerMetadata === null || typeof providerMetadata !== 'object') {
+    return null;
+  }
+  const openrouter = (providerMetadata as Record<string, unknown>).openrouter;
+  if (openrouter === null || typeof openrouter !== 'object') {
+    return null;
+  }
+  const usage = (openrouter as Record<string, unknown>).usage;
+  if (usage === null || typeof usage !== 'object') {
+    return null;
+  }
+  const cost = (usage as Record<string, unknown>).cost;
+  if (typeof cost !== 'number' || !Number.isFinite(cost)) {
+    return null;
+  }
+  return cost * 100;
+}

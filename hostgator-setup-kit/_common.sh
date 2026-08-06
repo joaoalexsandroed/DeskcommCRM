@@ -4,6 +4,10 @@ set -euo pipefail
 
 COMPOSE="docker-compose.prod.yml"
 COMPOSE_TRAEFIK="docker-compose.traefik.yml"
+# Nome do stack quando a VPS já tem Docker Swarm + Traefik rodando (variante
+# ORION — ver PATCH-ORION.md). Nesse caso `docker stack deploy` é quem sobe o
+# docker-compose.prod.yml, não `docker compose up`.
+STACK_NAME="${STACK_NAME:-deskcommcrm}"
 
 # Proxy reverso desta instalação. Vem do .env (load_env), com default 'caddy' —
 # ou seja, toda instalação que já existe continua exatamente como está.
@@ -34,6 +38,97 @@ dc_files() {
   fi
 }
 
+# ── A rede externa por onde o proxy de fora alcança o app ────────────────────
+# O nome que o docker compose dá ao projeto quando ninguém passa -p: basename do
+# diretório, minúsculo, só [a-z0-9_-] — E com os `_`/`-` do INÍCIO aparados
+# (NormalizeProjectName faz TrimLeft). Sem essa aparada, uma pasta como
+# `/root/_deskcomm` faz o kit calcular `_deskcomm` enquanto os contêineres
+# carregam `deskcomm`: a instalação deixa de se reconhecer e passa a se tratar
+# como intrusa. Medido contra o docker compose v2.38.2 em `_deskcomm`,
+# `-deskcomm`, `_-_crm` e `_123` — todos divergiam.
+nome_do_projeto_compose() {  # nome_do_projeto_compose <diretório>
+  local n
+  n="$(basename "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+  printf '%s' "${n#"${n%%[!_-]*}"}"
+}
+
+nome_do_projeto_atual() {
+  printf '%s' "${COMPOSE_PROJECT_NAME:-$(nome_do_projeto_compose "${PROJECT_DIR:-$PWD}")}"
+}
+
+# A bridge que ESTE projeto reserva para o proxy externo. Um `basename` cru
+# diverge numa pasta com maiúscula, ponto ou underscore inicial — e aí o kit
+# cria uma rede e o compose procura outra.
+rede_reservada_do_proxy() { printf '%s_proxy' "$(nome_do_projeto_atual)"; }
+
+# O compose declara TRAEFIK_NETWORK como rede EXTERNA, e rede externa que não
+# existe é recusada ANTES de o compose criar qualquer coisa — medido com o
+# compose v2.38.2: `up -d` morre em "network X declared as external, but could
+# not be found", sem dizer de onde saiu o nome. Descobrir isso aqui, com o nome na
+# mão, é dezenas de minutos de diferença para quem está instalando. Valor escrito
+# à mão no .env passa pelo mesmo crivo: erra tão fácil quanto a detecção.
+#
+# A rede que o instalador reserva para si é o caso em que não existir é NORMAL —
+# instalação nova, ou alguém que rodou `docker network prune`. Aí a resposta é
+# criar, não morrer: o nome é nosso e sabemos a forma dele.
+# Ecoa: ok | criar | inexistente | driver_errado
+veredito_rede_do_proxy() {  # veredito_rede_do_proxy <driver encontrado> <rede> <bridge do projeto>
+  local drv="${1:-}" rede="${2:-}" nossa="${3:-}"
+  if [ -z "$drv" ]; then
+    [ -n "$nossa" ] && [ "$rede" = "$nossa" ] && { printf 'criar'; return 0; }
+    printf 'inexistente'; return 0
+  fi
+  [ "$drv" = bridge ] && { printf 'ok'; return 0; }
+  printf 'driver_errado'
+}
+
+# Aplica o veredito acima: confere no Docker, cria a nossa quando falta, morre
+# explicando quando é de outro. Mora aqui — e não no install.sh — porque o
+# `dc up -d` do update.sh corre exatamente o mesmo risco: a bridge é um artefato
+# como qualquer outro e some num `docker network prune`, ou no `down -v` que o
+# próprio kit ensina como caminho de recomeço. Sem esta checagem a atualização
+# morre com a mesma mensagem opaca do compose, e pior: o agent.sh roda o
+# update.sh sozinho a cada 5 minutos, então ninguém está olhando a tela.
+# Define TRAEFIK_NETWORK quando ela vem vazia — de propósito, é o mesmo default
+# que o instalador grava no .env.
+garantir_rede_do_proxy() {
+  [ "${REVERSE_PROXY:-caddy}" = "traefik" ] || return 0
+  local nossa drv erro
+  nossa="$(rede_reservada_do_proxy)"
+  TRAEFIK_NETWORK="${TRAEFIK_NETWORK:-traefik}"
+  drv="$(docker network inspect -f '{{.Driver}}' "$TRAEFIK_NETWORK" 2>/dev/null || true)"
+  case "$(veredito_rede_do_proxy "$drv" "$TRAEFIK_NETWORK" "$nossa")" in
+  ok) : ;;
+  criar)
+    # O motivo vai junto porque aqui NÃO se sabe qual é: o comando está certo, e
+    # quem recusou foi o Docker (falta de faixa de IP livre numa VPS com muitas
+    # stacks é um caso conhecido). Sem repassar a resposta dele, a mensagem
+    # mandaria repetir à mão o comando que acabou de falhar.
+    if ! erro="$(docker network create "$TRAEFIK_NETWORK" 2>&1 >/dev/null)"; then
+      die "Não consegui criar a rede Docker '$TRAEFIK_NETWORK'. O Docker respondeu:
+  ${erro}"
+    fi
+    c_dim "  (rede '$TRAEFIK_NETWORK' criada — é por ela que o Traefik alcança o CRM)"
+    ;;
+  inexistente)
+    die "A rede Docker '$TRAEFIK_NETWORK' não existe.
+Rode 'docker network ls', identifique a rede do seu Traefik e ponha
+TRAEFIK_NETWORK=<nome> no .env antes de tentar de novo."
+    ;;
+  driver_errado)
+    # Mandar quem está em modo host "procurar a rede do seu Traefik" é mandar
+    # procurar o que não existe: em modo host ele não está em rede nenhuma do
+    # Docker. Para esse caso a saída é apagar a linha e deixar o kit decidir —
+    # ele cria a bridge do projeto sozinho.
+    die "A rede '$TRAEFIK_NETWORK' tem driver '$drv', e o app precisa
+de uma bridge para o Traefik alcançar o contêiner. Se o seu Traefik roda em modo
+host (é o caso quando 'docker ps' não mostra porta publicada nele), APAGUE a linha
+TRAEFIK_NETWORK do .env: o kit cria e usa a rede '$nossa'.
+Senão, rode 'docker network ls' e ponha a bridge certa em TRAEFIK_NETWORK no .env."
+    ;;
+  esac
+}
+
 # Cor só quando há terminal de verdade — mesma regra do install.sh (se mexer
 # numa, mexa na outra). Aqui isso vale dobrado: o update.sh, que herda estas
 # funções, é rodado pelo agent.sh com a saída redirecionada para arquivo
@@ -49,6 +144,7 @@ paint() { local code="$1"; shift; if [ "$COLOR" = 1 ]; then printf '\033[%sm%s\0
 c_red() { paint 31 "$*"; }
 c_grn() { paint 32 "$*"; }
 c_ylw() { paint 33 "$*"; }
+c_dim() { paint 2  "$*"; }
 die()   { c_red "✖ $*"; exit 1; }
 step()  { printf '\n'; paint 1 "▶ $*"; }
 
@@ -172,6 +268,95 @@ load_env() {
     printf -v "$key" '%s' "$val"
     export "${key?}"
   done < "$file"
+}
+
+# Detecta a variante ORION: a rede overlay `JANet` do Traefik já existente na
+# VPS (ver PATCH-ORION.md). Se existir, esta stack sobe/atualiza via
+# `docker stack deploy` (Swarm); senão, cai no `docker compose up` de sempre
+# — mesmo kit funciona nas duas VPS, sem flag manual pra lembrar.
+is_orion_vps() {
+  docker network inspect JANet >/dev/null 2>&1
+}
+
+# Container em execução do serviço <nome> dentro do stack Swarm (variante
+# ORION). Vazio se não achar (stack ainda não subiu, ou não é variante ORION).
+swarm_container() {
+  docker ps -q -f "label=com.docker.swarm.service.name=${STACK_NAME}_$1" -f "status=running" | head -1
+}
+
+# Gera uma cópia do .env SEM as aspas simples que envq() (install.sh) grava
+# em cada valor — `docker stack deploy` não remove essas aspas ao carregar
+# via env_file (diferente do `docker compose`), então o container receberia
+# "'valor'" literal. Reaproveita a mesma lógica de-quoting do load_env().
+write_stack_envfile() {
+  local src="${1:-.env}" dst="${2:-.env.stack}" line key val
+  : > "$dst"; chmod 600 "$dst"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) printf '%s\n' "$line" >> "$dst"; continue;; esac
+    case "$line" in *=*) ;; *) printf '%s\n' "$line" >> "$dst"; continue;; esac
+    key="${line%%=*}"; val="${line#*=}"
+    case "$val" in
+      \"*\") val="${val:1:${#val}-2}";;
+      \'*\') val="${val:1:${#val}-2}";;
+    esac
+    printf '%s=%s\n' "$key" "$val" >> "$dst"
+  done < "$src"
+}
+
+# Builda a imagem do worker (Swarm nunca builda — precisa existir local antes
+# do `docker stack deploy`) e sobe/atualiza a stack inteira. Em VPS sem
+# Traefik/JANet, faz o `docker compose up -d` de sempre (o `build:` do worker
+# builda sozinho nesse caminho).
+stack_up() {
+  if is_orion_vps; then
+    step "Buildando a imagem do worker (Swarm não builda — ver PATCH-ORION.md)"
+    docker build -f Dockerfile.worker -t "${WORKER_IMAGE:-deskcommcrm-worker:local}" "$PROJECT_DIR"
+    # 'worker' fica de fora sempre (imagem local-only, nunca foi a um
+    # registro). 'app' fica de fora só quando já existe local: instalação com
+    # build próprio do app (fork com features fora do release oficial, ex.:
+    # esta VPS) não tem de onde puxar; o padrão do kit (imagem do ghcr.io,
+    # ainda não baixada na 1ª instalação) segue pulled normalmente.
+    local app_img="${APP_IMAGE:-ghcr.io/melgarafael/deskcommcrm:latest}" pull_alvo="waha redis srh scheduler"
+    docker image inspect "$app_img" >/dev/null 2>&1 || pull_alvo="app $pull_alvo"
+    docker compose -f "$COMPOSE" pull $pull_alvo
+    # `docker stack deploy` NÃO lê .env sozinho pra resolver ${VAR} no YAML
+    # (diferente do `docker compose`) — exporta pro shell antes de deployar.
+    set -a; . ./.env; set +a
+    # env_file do container: gera versão sem aspas (ver write_stack_envfile).
+    write_stack_envfile .env .env.stack
+    export ENV_FILE=.env.stack
+    # Swarm só aceita rede overlay pra serviço (a 'internal' do compose vanilla
+    # é bridge) — ver comentário em docker-compose.prod.yml.
+    export INTERNAL_NETWORK_DRIVER=overlay
+    # --resolve-image never: não deixa o Swarm tentar resolver/checar a tag do
+    # worker contra um registro (ela só existe local) — usa o que já tem aqui.
+    docker stack deploy --resolve-image never -c "$COMPOSE" "$STACK_NAME"
+    # Tag igual (deskcommcrm-app:local, deskcommcrm-worker:local) +
+    # `--resolve-image never`: o Swarm compara a SPEC, não o conteúdo da
+    # imagem, e um rebuild local (mesma tag, digest novo) não conta como
+    # mudança — medido nesta VPS: a task seguia "Running" de antes do rebuild
+    # depois de um `stack deploy` limpo. Force-update garante que a task rode
+    # o que acabou de ser buildado; sem custo real quando não havia rebuild.
+    docker service update --force --quiet "${STACK_NAME}_app" >/dev/null
+    docker service update --force --quiet "${STACK_NAME}_worker" >/dev/null
+  else
+    # `dc`, não `docker compose -f "$COMPOSE"` cru: preserva o override
+    # REVERSE_PROXY=traefik (docker-compose.traefik.yml) fora do modo Swarm.
+    dc pull
+    dc up -d
+  fi
+}
+
+# Roda um comando dentro do container do app, na variante que estiver ativa
+# nesta VPS (Swarm ou compose comum). Uso: app_exec node -e "..."
+app_exec() {
+  if is_orion_vps; then
+    local cid; cid="$(swarm_container app)"
+    [ -n "$cid" ] || return 1
+    docker exec -i "$cid" "$@"
+  else
+    dc exec -T app "$@"
+  fi
 }
 
 # Vai pro diretório do projeto (onde está o compose) e carrega o .env.

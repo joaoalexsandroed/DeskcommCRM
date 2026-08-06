@@ -17,4 +17,8 @@ step "Restaurando $DUMP"
 gunzip -c "$DUMP" | docker run --rm -i postgres:17-alpine psql "$SUPABASE_DB_URL" \
   && c_grn "✓ banco restaurado" || die "Falha na restauração — veja o log acima."
 
-c_ylw "Reinicie o app: docker compose $(dc_files) restart app"
+if is_orion_vps; then
+  c_ylw "Reinicie o app: docker service update --force ${STACK_NAME}_app"
+else
+  c_ylw "Reinicie o app: docker compose $(dc_files) restart app"
+fi

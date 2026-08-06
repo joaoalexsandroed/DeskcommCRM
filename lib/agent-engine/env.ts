@@ -6,6 +6,12 @@
  */
 import { z } from 'zod';
 
+import {
+  RETORNO_MAX_AHEAD_MS_PADRAO,
+  RETORNO_MIN_AHEAD_MS_PADRAO,
+  RETORNO_STAGGER_WINDOW_MS_PADRAO,
+} from '@/lib/followup/janela';
+
 const envSchema = z.object({
   // Postgres do Supabase (connection string — Settings → Database). O motor usa
   // `pg` direto: FOR UPDATE SKIP LOCKED, advisory locks, FTS.
@@ -62,12 +68,15 @@ const envSchema = z.object({
   NUMBER_HEALTH_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
   // Cron persistente por contato — knobs, nunca constantes.
   CRON_TICK_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
-  CRON_STAGGER_WINDOW_MS: z.coerce.number().int().min(0).default(60_000),
+  CRON_STAGGER_WINDOW_MS: z.coerce.number().int().min(0).default(RETORNO_STAGGER_WINDOW_MS_PADRAO),
   CRON_RETRY_BASE_MS: z.coerce.number().int().positive().default(30_000),
   CRON_BATCH_SIZE: z.coerce.number().int().positive().default(100),
-  // Janela aceitável do follow-up agendado pela tool schedule_followup.
-  FOLLOWUP_MIN_AHEAD_MS: z.coerce.number().int().positive().default(300_000),
-  FOLLOWUP_MAX_AHEAD_MS: z.coerce.number().int().positive().default(15_552_000_000),
+  // Janela aceitável do retorno agendado — os DEFAULTS vêm de lib/followup/janela.ts
+  // porque o mesmo agendamento é validado aqui (worker) e dentro do Next (a
+  // capacidade que o dono liga na tela). Dois defaults fariam o MESMO horário ser
+  // aceito num caminho e recusado no outro, sem ninguém saber qual está certo.
+  FOLLOWUP_MIN_AHEAD_MS: z.coerce.number().int().positive().default(RETORNO_MIN_AHEAD_MS_PADRAO),
+  FOLLOWUP_MAX_AHEAD_MS: z.coerce.number().int().positive().default(RETORNO_MAX_AHEAD_MS_PADRAO),
   // TTL do prefixo estável de prompt cache (doutrina: 1h).
   LLM_CACHE_TTL: z.enum(['5m', '1h']).default('1h'),
   // Payload curado da tool get_lead_context.

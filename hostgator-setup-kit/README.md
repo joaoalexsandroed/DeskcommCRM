@@ -111,6 +111,14 @@ Não desligue o Traefik da hospedagem para liberar as portas — isso quebra as 
 painel dela. Se o seu Traefik usa nomes diferentes de `websecure`/`letsencrypt`, ajuste
 `TRAEFIK_ENTRYPOINT` e `TRAEFIK_CERTRESOLVER` no `.env`.
 
+Há um caso em que o instalador **pergunta em vez de decidir**: quando o Traefik da
+hospedagem roda em `--network host` (a Hostinger faz assim), o Docker não mostra porta
+publicada em contêiner nenhum, e então não dá para provar que é ele quem atende o seu
+domínio — poderia ser um nginx instalado direto no servidor. Como publicar o CRM atrás do
+proxy errado deixa o site no ar sem responder, o instalador mostra o que encontrou e pede
+confirmação. Em `bash install.sh --yes` não há a quem perguntar: ele para e pede que você
+declare `REVERSE_PROXY=traefik` no `.env` — aí a escolha é sua e ele segue sem perguntar.
+
 ## Scripts do kit
 
 | Script | Função |

@@ -30,6 +30,14 @@ export const KIND_LABEL = {
   next_action_ambiguous: "Próxima ação sem negócio definido — precisa da sua escolha",
   risk_backlog_seeded: "Negócios que já estavam parados — precisam de uma decisão",
   reactivation_expired: "A sugestão de retomar contato venceu — decida",
+  // Diz o que ACONTECEU com o cliente, não o que falhou por dentro: o dono do
+  // negócio precisa saber que um atendimento saiu capado, não que um token
+  // colidiu. O motivo técnico fica no corpo do aviso, para quem for investigar.
+  capabilities_missing: "Um atendimento saiu sem as ferramentas que você ligou",
+  // Diz o que o CLIENTE viu, não o que o worker registrou: uma resposta que
+  // ficou "enviando" para sempre é, do lado de lá, uma mensagem que nunca
+  // chegou. O motivo técnico fica no corpo do aviso.
+  message_send_stuck: "Uma resposta ficou presa e não chegou ao cliente",
   other: "Aviso do assistente",
 } as const satisfies Record<InboxKind, string>;
 

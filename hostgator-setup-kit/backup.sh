@@ -18,7 +18,13 @@ c_grn "✓ banco: $(du -h "$BACKUP_DIR/db-$ts.sql.gz" | awk '{print $1}')"
 
 step "Snapshot das sessões do WhatsApp → $BACKUP_DIR/waha-$ts.tgz"
 vol="$(dc config --volumes 2>/dev/null | grep -m1 waha-data || echo '')"
-proj="$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+# Nome do volume = prefixo_waha-data. Em Swarm (variante ORION) o prefixo é o
+# nome do stack; em compose comum é a pasta do projeto (comportamento antigo).
+if is_orion_vps; then
+  proj="$STACK_NAME"
+else
+  proj="$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+fi
 docker run --rm -v "${proj}_waha-data:/data:ro" -v "$BACKUP_DIR:/out" alpine:3.20 \
   tar czf "/out/waha-$ts.tgz" -C /data . 2>/dev/null \
   && c_grn "✓ sessões WhatsApp salvas" \

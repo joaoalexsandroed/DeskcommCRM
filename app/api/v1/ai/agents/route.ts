@@ -186,7 +186,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       organization_id: activeOrg.orgId,
       name: input.name,
       description: input.description ?? null,
-      model: input.model ?? "anthropic/claude-sonnet-4-6",
+      model: input.model ?? "anthropic/claude-sonnet-5",
       system_prompt: input.system_prompt,
       is_active: true,
       is_default: false,

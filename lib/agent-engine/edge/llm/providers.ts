@@ -6,6 +6,7 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { LanguageModel } from 'ai';
 import { MockLanguageModelV3 } from 'ai/test';
 
@@ -23,6 +24,15 @@ export type ProviderRegistry = Record<string, (apiKey: string, modelId: string) 
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com';
 const OPENAI_ENDPOINT = 'https://api.openai.com';
 const GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com';
+/**
+ * OpenRouter agrega 300+ modelos (Anthropic/OpenAI/Google/Meta/DeepSeek/xAI etc.)
+ * atrás de uma chave BYOK só — é o provider que tira a org de ficar presa aos 3
+ * diretos. `usage: {include: true}` no factory pede o custo REAL da chamada de
+ * volta em `result.providerMetadata.openrouter.usage.cost` (USD) — é o que
+ * run-model-call.ts usa em vez da tabela estática de pricing.ts, que não escala
+ * pra um catálogo deste tamanho (ver migration 0093).
+ */
+const OPENROUTER_ENDPOINT = 'https://openrouter.ai';
 
 /**
  * Providers reais do lançamento. Sonnet (Anthropic) é o default RECOMENDADO —
@@ -51,6 +61,10 @@ export function createDefaultRegistry(opts?: { allowedHosts?: string[] }): Provi
       createOpenAI({ apiKey, fetch: contain(OPENAI_ENDPOINT) })(modelId),
     google: (apiKey, modelId) =>
       createGoogleGenerativeAI({ apiKey, fetch: contain(GOOGLE_ENDPOINT) })(modelId),
+    openrouter: (apiKey, modelId) =>
+      createOpenRouter({ apiKey, fetch: contain(OPENROUTER_ENDPOINT) })(modelId, {
+        usage: { include: true },
+      }),
   };
 }
 

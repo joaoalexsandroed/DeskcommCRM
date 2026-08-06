@@ -2,9 +2,9 @@ import { notFound, redirect } from "next/navigation";
 
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { ROLE_RANK } from "@/lib/auth/types";
+import { listSelectableChannels } from "@/lib/channels/selectable";
 import { createClient } from "@/lib/supabase/server";
 import type { RouterDetailState } from "@/hooks/ai/useRouters";
-import type { ChannelSessionLite } from "../../agents/[id]/_components/AgentForm";
 import { RouterEditorClient } from "./_client";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +24,7 @@ export default async function RouterEditorPage({ params }: { params: Promise<{ i
 
   const supabase = await createClient();
 
-  const [{ data: routerRow }, { data: memberRows }, { data: agentRows }, { data: channelRows }] =
+  const [{ data: routerRow }, { data: memberRows }, { data: agentRows }, channelSessions] =
     await Promise.all([
       supabase
         .from("ai_routers")
@@ -44,10 +44,7 @@ export default async function RouterEditorPage({ params }: { params: Promise<{ i
         .eq("organization_id", activeOrg.orgId)
         .is("archived_at", null)
         .order("name", { ascending: true }),
-      supabase
-        .from("channel_sessions")
-        .select("id, display_name, status, phone_number, waha_session_name")
-        .eq("organization_id", activeOrg.orgId),
+      listSelectableChannels(supabase, activeOrg.orgId),
     ]);
 
   if (!routerRow) notFound();
@@ -58,12 +55,6 @@ export default async function RouterEditorPage({ params }: { params: Promise<{ i
   };
 
   const agents = agentRows ?? [];
-  const channelSessions: ChannelSessionLite[] = (channelRows ?? []).map((c) => ({
-    id: c.id,
-    display_name: c.display_name ?? c.waha_session_name,
-    status: c.status,
-    phone_number: c.phone_number ?? null,
-  }));
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">

@@ -73,7 +73,7 @@ function loadInternalSecret(): string {
   return secret;
 }
 
-const creds = loadCreds();
+let creds = loadCreds();
 const secret = loadInternalSecret();
 
 /** Roda 1 subcomando do helper de SQL cru e devolve o JSON impresso na última linha. */
@@ -188,6 +188,10 @@ test.describe("followup — jornada completa (Task 8.3)", () => {
 
   test.beforeAll(() => {
     execFileSync("npx", ["tsx", "scripts/seed-e2e-followup-agent.ts"], { stdio: "inherit" });
+    // O seed ESCREVE em .e2e-creds.json, e `creds` foi lido no carregamento do
+    // módulo — sem reler, o objeto em memória nunca vê o bloco que o seed
+    // acabou de gravar. Mesmo idioma de queue-assign.spec.ts, que passa por isso.
+    creds = JSON.parse(fs.readFileSync(CREDS_PATH, "utf8")) as Creds;
   });
 
   test("silêncio → enroll → trigger→wait→action→classify → resposta → outcome → fila", async ({ page }) => {

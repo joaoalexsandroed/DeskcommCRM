@@ -103,6 +103,7 @@ import type { DisclosureMode } from '../guardrails/disclosure/template';
 import { decidePromise } from '../guardrails/promise/engine';
 import { loadPromiseTable } from '../guardrails/promise/table';
 import { classifyPromise } from '../guardrails/promise/semantic';
+import { expectativaDeAtendimento } from '@/lib/escalacao/disponibilidade';
 import { diffCheckpoint } from '@/lib/leads/checkpoint-diff';
 import { emitAgentActivityForContact } from '@/lib/leads/agent-activity';
 import { resolveActiveLeadForContact, type LeadCandidate } from '@/lib/leads/active-lead';
@@ -586,6 +587,52 @@ export interface AgentTurnInput {
  * guarda NADA entre invocações — sessão fresca por job (todo estado no closure). O
  * que varia entre os dois tipos de turno vem em `input` (AgentTurnInput).
  */
+/**
+ * O aviso de que o agente atendeu SEM as capacidades configuradas.
+ *
+ * Vai para a Central de avisos (`agent_inbox_items`) porque é lá que o dono do
+ * negócio olha — log de worker em VPS não é superfície de nada.
+ *
+ * Dedup por episódio ABERTO da organização (mesmo padrão do handoff): o defeito
+ * é sistêmico, não por conversa, e uma retentativa em rajada viraria dezenas de
+ * linhas idênticas — inbox inundado é inbox ignorado. Quem resolver o item e
+ * vir o problema voltar recebe um item novo, que é o comportamento certo.
+ *
+ * Best-effort de propósito: se ATÉ o aviso falhar, o turno continua. Derrubar o
+ * atendimento do cliente para reclamar de uma tool extra seria trocar um
+ * problema pequeno por um grande.
+ */
+export async function avisarCapacidadesAusentes(
+  db: pg.Pool,
+  tenantId: string,
+  conversationId: string,
+  detalhe: string,
+  log: Logger,
+): Promise<void> {
+  try {
+    await db.query(
+      `insert into agent_inbox_items (organization_id, kind, severity, title, body, ref_kind, ref_id)
+       select $1, 'capabilities_missing', 'critical', $2, $3, 'conversation', $4
+        where not exists (
+          select 1 from agent_inbox_items
+           where organization_id = $1 and kind = 'capabilities_missing' and status = 'open'
+        )`,
+      [
+        tenantId,
+        'O agente atendeu sem as capacidades que você ligou',
+        'As ferramentas configuradas na tela do agente não puderam ser carregadas neste ' +
+          'atendimento, e ele respondeu ao cliente sem elas. A conversa não foi interrompida. ' +
+          `Motivo técnico: ${detalhe}`,
+        conversationId,
+      ],
+    );
+  } catch (err) {
+    log.warn('aviso de capacidades ausentes não foi gravado', {
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 120),
+    });
+  }
+}
+
 export async function runAgentTurn(
   deps: InboundTurnDeps,
   job: JobRow,
@@ -1447,7 +1494,15 @@ export async function runAgentTurn(
       ...AGENT_TOOL_DEFS.schedule_followup,
       execute: async (raw) => {
         try {
-          const res = await applyScheduleFollowup(pool, { clock, knobs: followupKnobs }, { tenantId, leadId }, raw);
+          // agentId vai junto para a atividade da timeline nascer com AUTORIA: sem
+          // ele a linha entra como "Sistema" e o humano não sabe qual agente
+          // prometeu voltar — numa org com três agentes isso não responde nada.
+          const res = await applyScheduleFollowup(
+            pool,
+            { clock, knobs: followupKnobs },
+            { tenantId, leadId, agentId: agentConfig?.agentId ?? null },
+            raw,
+          );
           if (!res.ok) {
             return res; // erro de ensino (payload / data no passado / fora da janela)
           }
@@ -1527,10 +1582,17 @@ export async function runAgentTurn(
           );
           if (!res.ok) return res;
           openedCaseThisTurn = true;
+          // ACH-03: a expectativa vai junto com a confirmação. Medido num turno
+          // real: o agente abria o caso e prometia ao cliente que "alguém entra
+          // em contato" sem nunca ter olhado se havia alguém — a capacidade de
+          // consultar existia, estava ligada e montada no turno, e ele não a
+          // usou. Capacidade que depende de o modelo lembrar não existe metade
+          // das vezes; esta o sistema garante.
+          const { frase } = await expectativaDeAtendimento(pool, tenantId, new Date());
           return {
             ok: true,
             case_id: res.caseId,
-            message: 'caso aberto; continue a conversa com o lead normalmente.',
+            message: `caso aberto; continue a conversa com o lead normalmente. ${frase}`,
           };
         } catch (err) {
           noteRunError(err instanceof Error ? err : new Error(String(err)));
@@ -1602,10 +1664,18 @@ export async function runAgentTurn(
       }
     } catch (err) {
       // Tool extra é privilégio, não invariante: falha no mint/montagem NÃO
-      // derruba o turno — o run segue com as tools do engine e o humano vê o log.
-      runLog.error('tools MCP da tela não montadas — turno segue sem elas', {
-        error: (err instanceof Error ? err.message : String(err)).slice(0, 200),
-      });
+      // derruba o turno — a conversa do cliente não pode morrer porque uma tool
+      // extra falhou. Isso continua certo.
+      //
+      // O que estava errado era o DEPOIS. A versão anterior deste comentário
+      // dizia "o humano vê o log". Não vê: o log sai no stdout do worker, num
+      // contêiner de VPS que o dono do negócio nunca abre. Medido num turno
+      // real — o agente atendeu sem NENHUMA das capacidades que o humano tinha
+      // ligado na tela, e a única pista existia num log que ninguém lê. É
+      // falha-em-verde: anunciada na tela, ausente na execução, nada contando.
+      const detalhe = (err instanceof Error ? err.message : String(err)).slice(0, 200);
+      runLog.error('tools MCP da tela não montadas — turno segue sem elas', { error: detalhe });
+      await avisarCapacidadesAusentes(pool, tenantId, input.conversationId, detalhe, runLog);
     }
   }
 

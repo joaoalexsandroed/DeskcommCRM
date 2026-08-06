@@ -25,6 +25,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText, stepCountIs, type LanguageModel, type StopCondition, type ToolSet } from "ai";
 
 import { CredentialUnavailableError, loadCredential } from "@/lib/ai/credentials";
@@ -139,6 +140,14 @@ function buildModel(provider: string, apiKey: string, modelId: string): Language
       return createOpenAI({ apiKey })(modelId);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelId);
+    case "openrouter":
+      // Mesmo padrão dos outros três aqui (sem o allowlistedFetch de
+      // lib/agent-engine/edge/llm/providers.ts — este runtime é @deprecated e
+      // não tem a contenção de egress F4-03). Achado em produção: "Testar
+      // agente" chama runAgent() (este arquivo), não o runtime canônico —
+      // toda versão com provider=openrouter falhava com unsupported_provider
+      // até este case existir, mesmo já suportado no runtime canônico.
+      return createOpenRouter({ apiKey })(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }

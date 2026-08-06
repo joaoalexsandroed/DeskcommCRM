@@ -56,6 +56,24 @@ nome_do_projeto_atual() {
   printf '%s' "${COMPOSE_PROJECT_NAME:-$(nome_do_projeto_compose "${PROJECT_DIR:-$PWD}")}"
 }
 
+# owner/repo (minúsculo, sem .git) do remote `origin` deste checkout — é dali
+# que o CI publica a imagem (ver .github/workflows/publish-image.yml,
+# IMAGE_NAME=github.repository). Um clone que trocou REPO_URL pro próprio
+# fork (doc de instalação) tem que atualizar puxando do MESMO fork, não do
+# repositório original — hardcode aqui travaria todo fork num registro que
+# nunca recebe as imagens dele. Cai pro repositório original só se o remote
+# não existir ou não for parseável (checkout fora do padrão).
+ghcr_owner_repo() {
+  local url owner_repo
+  url="$(git -C "${PROJECT_DIR:-$PWD}" remote get-url origin 2>/dev/null || true)"
+  owner_repo="$(printf '%s' "$url" | sed -E 's#^.*[:/]([^/]+)/([^/.]+)(\.git)?$#\1/\2#')"
+  if [ -n "$owner_repo" ] && [ "$owner_repo" != "$url" ]; then
+    printf '%s' "$owner_repo" | tr '[:upper:]' '[:lower:]'
+  else
+    printf 'melgarafael/deskcommcrm'
+  fi
+}
+
 # A bridge que ESTE projeto reserva para o proxy externo. Um `basename` cru
 # diverge numa pasta com maiúscula, ponto ou underscore inicial — e aí o kit
 # cria uma rede e o compose procura outra.

@@ -9286,3 +9286,43 @@ $$;
 
 comment on function public.fn_publish_ai_agent_version(uuid, uuid, uuid) is
   'EPIC-13 S-13.06 (fixed in 0025): atomic Save/Publish flip. Column refs qualified to avoid ambiguity with RETURNS TABLE OUT params. Migration 0110: pula a checagem de ai_models para provider=openrouter (catálogo não curado, buscado ao vivo).';
+
+-- ---- backfill de channel_sessions REMOVED + fecha constraint (migration 0111) ----
+-- *(branch vps-orion, não faz parte do upstream)* Ver cabeçalho da migration
+-- 0111 para o motivo completo. Idempotente: reaplicar não acha mais linha
+-- 'REMOVED' (resolvida na primeira passada) nem a constraint antiga (o
+-- drop/add abaixo já converge para o estado final em qualquer execução).
+
+do $$
+declare
+  v_id uuid;
+  v_tem_algo boolean;
+begin
+  for v_id in select id from public.channel_sessions where status = 'REMOVED' loop
+    select exists (
+      select 1 from public.conversations where channel_session_id = v_id
+      union all select 1 from public.messages where channel_session_id = v_id
+      union all select 1 from public.ai_agent_versions where channel_session_id = v_id
+      union all select 1 from public.ai_routers where channel_session_id = v_id
+      union all select 1 from public.channel_knobs where channel_session_id = v_id
+      union all select 1 from public.before_send_traces where channel_session_id = v_id
+    ) into v_tem_algo;
+
+    if v_tem_algo then
+      update public.channel_sessions
+         set archived_at = now(),
+             status = 'STOPPED',
+             last_status_change_at = now()
+       where id = v_id;
+    else
+      delete from public.channel_sessions where id = v_id;
+    end if;
+  end loop;
+end $$;
+
+alter table public.channel_sessions
+  drop constraint if exists channel_sessions_status_check;
+alter table public.channel_sessions
+  add constraint channel_sessions_status_check check (
+    status = any (array['STARTING', 'SCAN_QR_CODE', 'WORKING', 'STOPPED', 'FAILED']::text[])
+  );

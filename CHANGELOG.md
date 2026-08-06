@@ -8,6 +8,40 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.2.0] — 2026-08-06
+
+### Adicionado
+
+- **Suporte a OpenRouter como provedor de IA.** Catálogo de 300+ modelos buscado ao vivo na API
+  (não curado como os demais provedores), conectado às telas de credenciais e de agentes — BYOK
+  atrás de uma chave só.
+- **Fila de leads por atendente** e reforços no CRM vivo (linha do tempo/atividade dos leads).
+- **Foto de perfil no inbox** e revisão do composer para conversas longas no WhatsApp.
+- **Suporte a proxy reverso externo já existente na VPS** (Traefik/Coolify/Dokploy) reconhecido
+  automaticamente pelo instalador.
+
+### Alterado
+
+- Endurecimento de segurança: varredura das funções `security definer` expostas a mais que o
+  esperado, teto de tentativas de login por IP, fechamento de vazamentos de dado entre tenants.
+- CI: cobertura de E2E expandida e mais estável; correções de setup (Node, Buildx) e de colisão de
+  timestamp entre migrations.
+
+### Corrigido
+
+- Mensagem enviada pelo próprio celular deixava de aparecer no CRM.
+- **O `update.sh`/`install.sh` do kit de instalação sempre buscavam a imagem em
+  `ghcr.io/melgarafael/deskcommcrm`**, mesmo numa instalação com `REPO_URL`/`origin` apontando para
+  um fork — o registro do fork nunca era consultado. Agora a imagem é derivada do remote `origin`
+  do próprio checkout.
+
+**⚠️ Requer atenção**
+
+Se a sua instalação usa `REPO_URL`/`origin` apontando para um **fork** (não o repositório
+oficial `melgarafael/DeskcommCRM`), a próxima atualização passa a puxar a imagem publicada pelo
+**seu** fork em vez da do repositório oficial. Confirme que o CI do seu fork já publicou a tag
+correspondente no GHCR antes de atualizar.
+
 ## [1.1.0] — 2026-07-30
 
 ### Adicionado

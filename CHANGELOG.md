@@ -8,6 +8,16 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.2.1] — 2026-08-07
+
+### Corrigido
+
+- **Confirmação de e-mail não voltava pro onboarding atrás de proxy reverso self-host**
+  (Traefik/Coolify/Dokploy). `/auth/confirm` montava o redirect final com `url.origin` (o Host
+  visto pelo container, ex.: `0.0.0.0:3000`) em vez do domínio público — o `verifyOtp` completava
+  com sucesso, mas o navegador era jogado pro endereço interno. Agora usa
+  `env.NEXT_PUBLIC_APP_URL`, como os demais links públicos (convites) já faziam.
+
 ## [1.2.0] — 2026-08-06
 
 ### Adicionado

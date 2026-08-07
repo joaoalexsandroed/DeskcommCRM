@@ -4,6 +4,7 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { ensureTenantForUser } from "@/lib/auth/provision";
 import { audit } from "@/lib/audit";
+import { env } from "@/lib/env";
 
 /**
  * GET /auth/confirm — troca o token do e-mail (token_hash) por uma sessão.
@@ -25,7 +26,11 @@ export async function GET(request: NextRequest) {
   const type = url.searchParams.get("type") as EmailOtpType | null;
   const requestId = request.headers.get("x-request-id");
 
-  const redirectTo = (path: string) => NextResponse.redirect(new URL(path, url.origin));
+  // Base fixa (env.NEXT_PUBLIC_APP_URL), não url.origin: atrás de proxy
+  // reverso self-host (Traefik/Coolify/Dokploy) o Host visto pelo container
+  // pode não ser o domínio público — url.origin já saiu como "0.0.0.0:3000"
+  // em produção, quebrando o redirect final mesmo com verifyOtp bem-sucedido.
+  const redirectTo = (path: string) => NextResponse.redirect(new URL(path, env.NEXT_PUBLIC_APP_URL));
 
   if (!tokenHash || !type) {
     return redirectTo("/login?error=link_invalido");

@@ -104,6 +104,12 @@ AI_CRED_AES_KEY=$CHAVE_AI
 WAHA_API_BASE_URL=http://127.0.0.1:3999
 WAHA_API_KEY=e2e-placeholder-nao-e-segredo
 WAHA_WEBHOOK_BASE_URL=http://127.0.0.1:3001
+# Mesma porta do webServer do playwright.config.ts. Sem isto, /auth/confirm
+# monta o redirect pós-login com o default de lib/env.ts (localhost:3000) em
+# vez da porta real da suíte — connection refused ao seguir o link do e-mail
+# de confirmação/reset (medido em 2026-08-07: signup-journey,
+# password-recovery e reset-password-mfa quebravam os três pelo mesmo motivo).
+NEXT_PUBLIC_APP_URL=http://127.0.0.1:3001
 UPSTASH_REDIS_REST_URL=http://127.0.0.1:3998
 UPSTASH_REDIS_REST_TOKEN=e2e-placeholder-nao-e-segredo
 NEXT_TELEMETRY_DISABLED=1

@@ -324,7 +324,10 @@ test.describe("ciclo de vida do convite (ponta a ponta + adversarial)", () => {
     });
     await page.goto(`/team/accept-invite/${valid}`);
     await expect(page.getByRole("heading", { name: /Você foi convidado/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Fazer login/i })).toBeVisible();
+    // Duas CTAs pra quem não está autenticado: já tem conta (login) ou ainda
+    // não tem (signup) — os dois preservam o next de volta pra este convite.
+    await expect(page.getByRole("link", { name: /Entrar/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Criar conta/i })).toBeVisible();
   });
 });
 

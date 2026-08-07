@@ -3,6 +3,7 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 import { ensureTenantForUser } from "@/lib/auth/provision";
+import { verifyInviteToken } from "@/lib/auth/invite-token";
 import { audit } from "@/lib/audit";
 import { env } from "@/lib/env";
 
@@ -50,6 +51,26 @@ export async function GET(request: NextRequest) {
 
   if (type === "recovery") {
     return redirectTo("/login/reset");
+  }
+
+  // Quem se cadastrou a partir de um link de convite (signUp() gravou o
+  // token no user_metadata) não deve ganhar uma organização nova aqui — vai
+  // direto aceitar o convite, que é a única membership que essa pessoa
+  // pediu. Revalida o token (pode ter expirado entre o cadastro e o clique
+  // no e-mail) em vez de confiar cegamente no metadata.
+  const pendingInviteToken = data.user.user_metadata?.invite_token;
+  if (typeof pendingInviteToken === "string") {
+    const payload = verifyInviteToken(pendingInviteToken);
+    const confirmedEmail = (data.user.email ?? "").trim().toLowerCase();
+    if (payload && payload.email.trim().toLowerCase() === confirmedEmail) {
+      void audit({
+        action: "auth.signup_confirmed",
+        actorUserId: data.user.id,
+        metadata: { via_invite: true },
+        requestId,
+      });
+      return redirectTo(`/team/accept-invite/${pendingInviteToken}`);
+    }
   }
 
   try {

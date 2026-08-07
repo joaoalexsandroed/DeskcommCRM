@@ -1,4 +1,4 @@
--- 0111 — Backfill de channel_sessions.status='REMOVED' + fecha a constraint
+-- 0117 — Backfill de channel_sessions.status='REMOVED' + fecha a constraint
 --
 -- *(branch `vps-orion`, não faz parte do upstream)* Forward-fix da fusão com o
 -- upstream: a 0101 original desta branch (renomeada 0094→0101, depois

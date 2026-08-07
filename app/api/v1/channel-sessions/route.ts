@@ -70,7 +70,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (!waha) {
     return fail(
       "waha_not_configured",
-      "O serviço do WhatsApp (WAHA) não está ativo. Suba o container e tente de novo.",
+      "O WhatsApp (WAHA) não está configurado neste ambiente: faltam WAHA_API_BASE_URL e/ou WAHA_API_KEY. Configure-as e tente de novo.",
       503,
       { requestId },
     );
@@ -118,14 +118,13 @@ export async function POST(req: NextRequest): Promise<Response> {
   try {
     await waha.startSession(sessionName);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "unknown";
     // Rollback: sem WAHA no ar, não deixamos um canal fantasma preso em STARTING.
     await supabase
       .from("channel_sessions")
       .delete()
       .eq("organization_id", activeOrg.orgId)
       .eq("id", created.id);
-    return fail("waha_error", wahaFriendlyError(msg), 502, { requestId });
+    return fail("waha_error", wahaFriendlyError(err), 502, { requestId });
   }
 
   void audit({

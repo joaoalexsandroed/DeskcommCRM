@@ -8,6 +8,8 @@
  * stored in container env). Plaintext-then-hash is NOT used in this version.
  * So WAHA_API_KEY in .env.local IS the hex hash.
  */
+import { classificarFalhaDeAlcance, explicarFalhaDeAlcance } from "@/lib/net/alcance";
+
 export class WahaClient {
   constructor(
     private readonly baseUrl: string,
@@ -184,13 +186,27 @@ export class WahaClient {
 }
 
 /**
- * Traduz erros crus do WAHA (fetch failed, ECONNREFUSED, timeout) numa
- * mensagem clara para o usuário. Usado quando o container não está no ar.
+ * Traduz erros crus do WAHA numa mensagem que aponta ONDE mexer.
+ *
+ * A versão anterior mandava TODA falha de rede para a mesma frase — "confirme
+ * que o container está no ar" —, inclusive `ENOTFOUND`, que significa o oposto:
+ * o endereço configurado não existe, então não há container nenhum a conferir.
+ * Em produção isso mandou o dono reiniciar durante semanas um container que
+ * nunca havia caído. Reiniciar o que está de pé não conserta um endereço errado,
+ * e a frase errada é pior que nenhuma: ela encerra a investigação.
+ *
+ * Aceita o erro CRU, e não só a mensagem, porque o código real (`ENOTFOUND`,
+ * `ECONNREFUSED`) vive na cadeia de `cause` — `err.message` sozinho é sempre
+ * "fetch failed". Continua aceitando string para os pontos que já achataram o
+ * erro; lá a classificação cai no texto e degrada para "indeterminada", que é a
+ * verdade disponível.
  */
-export function wahaFriendlyError(msg: string): string {
-  if (/fetch failed|ECONNREFUSED|ENOTFOUND|und_err|network|timeout|socket|EAI_AGAIN/i.test(msg)) {
-    return "O serviço do WhatsApp (WAHA) não está respondendo. Confirme que o container está no ar e tente de novo.";
+export function wahaFriendlyError(erro: unknown): string {
+  const falha = classificarFalhaDeAlcance(erro);
+  if (falha !== "indeterminada") {
+    return explicarFalhaDeAlcance(falha, "o WhatsApp (WAHA)");
   }
+  const msg = erro instanceof Error ? erro.message : String(erro ?? "unknown");
   return `Falha na comunicação com o WhatsApp (WAHA): ${msg}`;
 }
 

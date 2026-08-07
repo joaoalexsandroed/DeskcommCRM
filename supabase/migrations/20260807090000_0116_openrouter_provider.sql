@@ -1,4 +1,4 @@
--- 0110 — OpenRouter como provider LLM (BYOK)
+-- 0116 — OpenRouter como provider LLM (BYOK)
 --
 -- OpenRouter agrega centenas de modelos (Anthropic, OpenAI, Google, Meta,
 -- Mistral, DeepSeek, xAI etc.) atrás de UMA chave BYOK — é como a org deixa de
@@ -120,7 +120,7 @@ begin
   end if;
 
   -- openrouter não tem catálogo curado em ai_models (300+ modelos, buscados ao
-  -- vivo da API — ver comentário da migration 0110): a checagem de existência
+  -- vivo da API — ver comentário da migration 0116): a checagem de existência
   -- só se aplica aos providers com catálogo curado.
   if v_version.provider <> 'openrouter' then
     select count(*)
@@ -160,4 +160,4 @@ end;
 $$;
 
 comment on function public.fn_publish_ai_agent_version(uuid, uuid, uuid) is
-  'EPIC-13 S-13.06 (fixed in 0025): atomic Save/Publish flip. Column refs qualified to avoid ambiguity with RETURNS TABLE OUT params. Migration 0110: pula a checagem de ai_models para provider=openrouter (catálogo não curado, buscado ao vivo).';
+  'EPIC-13 S-13.06 (fixed in 0025): atomic Save/Publish flip. Column refs qualified to avoid ambiguity with RETURNS TABLE OUT params. Migration 0116: pula a checagem de ai_models para provider=openrouter (catálogo não curado, buscado ao vivo).';

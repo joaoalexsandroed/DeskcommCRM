@@ -7,6 +7,29 @@ import { signupSchema, type SignupInput } from "@/lib/auth/schemas";
 import { audit, hashEmail } from "@/lib/audit";
 import { authRateLimited, AUTH_LIMITS } from "@/lib/auth/rate-limit";
 import { env } from "@/lib/env";
+import { verifyInviteToken } from "@/lib/auth/invite-token";
+
+// Só o path exato de accept-invite, com token no formato <body>.<sig> — não é
+// um "next" genérico (esse fluxo não passa por revisão de open-redirect).
+const ACCEPT_INVITE_NEXT = /^\/team\/accept-invite\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/;
+
+/**
+ * Extrai o token de convite de um `next` vindo do form de signup, e só o
+ * devolve se ainda for válido (assinatura + expiração) E o e-mail bater com o
+ * que a pessoa está cadastrando — caso contrário ela cairia em
+ * /team/accept-invite com "email não corresponde" logo após criar a própria
+ * conta, o que é mais confuso que simplesmente ignorar o convite aqui.
+ */
+function tokenDoConviteSeValido(next: string | undefined, email: string): string | null {
+  if (!next) return null;
+  const m = ACCEPT_INVITE_NEXT.exec(next);
+  if (!m) return null;
+  const token = m[1]!;
+  const payload = verifyInviteToken(token);
+  if (!payload) return null;
+  if (payload.email.trim().toLowerCase() !== email.trim().toLowerCase()) return null;
+  return token;
+}
 
 export type SignUpResult =
   | { ok: true }
@@ -25,7 +48,7 @@ export type SignUpResult =
  * o GoTrue devolve um usuário ofuscado (identities vazio) sem erro, e nós não
  * diferenciamos. Rate limit de envio de e-mail é do próprio GoTrue.
  */
-export async function signUp(input: SignupInput): Promise<SignUpResult> {
+export async function signUp(input: SignupInput, next?: string): Promise<SignUpResult> {
   const parsed = signupSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -47,13 +70,22 @@ export async function signUp(input: SignupInput): Promise<SignUpResult> {
     return { ok: false, error: "rate_limited" };
   }
 
+  // Quem chegou aqui a partir de um link de convite (ex.: clicou "Criar
+  // conta" na tela de aceite) não deve ganhar uma organização nova ao
+  // confirmar o e-mail — /auth/confirm lê este metadata e pula o
+  // provisionamento automático, mandando direto para aceitar o convite.
+  const inviteToken = tokenDoConviteSeValido(next, parsed.data.email);
+
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
     options: {
       emailRedirectTo: `${origin}/auth/confirm`,
-      data: { org_name: parsed.data.org_name },
+      data: {
+        org_name: parsed.data.org_name,
+        ...(inviteToken ? { invite_token: inviteToken } : {}),
+      },
     },
   });
 

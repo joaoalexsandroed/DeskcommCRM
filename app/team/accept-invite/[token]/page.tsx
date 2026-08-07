@@ -63,15 +63,23 @@ export default async function AcceptInvitePage({ params }: PageProps) {
       <Shell>
         <h1 className="text-xl font-semibold">Você foi convidado</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Para aceitar o convite como <strong>{payload.role}</strong>, faça login com o email{" "}
-          <strong>{payload.email}</strong>.
+          Para aceitar o convite como <strong>{payload.role}</strong>, entre ou crie uma conta com
+          o email <strong>{payload.email}</strong>.
         </p>
-        <Link
-          href={`/login?next=${next}`}
-          className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-        >
-          Fazer login
-        </Link>
+        <div className="mt-4 flex flex-col gap-2">
+          <Link
+            href={`/login?next=${next}`}
+            className="inline-block rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground"
+          >
+            Já tenho conta — Entrar
+          </Link>
+          <Link
+            href={`/signup?next=${next}`}
+            className="inline-block rounded-md border px-4 py-2 text-center text-sm font-medium hover:bg-accent"
+          >
+            Ainda não tenho conta — Criar conta
+          </Link>
+        </div>
       </Shell>
     );
   }

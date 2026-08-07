@@ -157,8 +157,19 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
   /** Ids salvos que o servidor não oferece mais — some da tela seria mentir. */
   const orfas = value.filter((id) => !porNome.has(id));
 
-  function aplicar(proximo: string[], motivoSeRecusar: string) {
-    if (proximo.length > TETO_TOOLS_POR_AGENTE) {
+  /**
+   * `vagasExigidas` é o que DECIDE, e por padrão é o tamanho do resultado.
+   *
+   * Ele existe separado porque ligar um pacote exige mais vagas do que o
+   * resultado ocupa: as críticas do pacote não entram por ele, mas o humano
+   * precisa poder marcá-las depois (issue #162). A primeira versão desta
+   * correção contava as críticas só na MENSAGEM de recusa e deixava a decisão
+   * em `proximo.length` — o número certo aparecia no texto e não mudava nada.
+   * Medido na tela: com 3 ligadas, "Atender" (17 automáticas + 1 crítica)
+   * chegava a 20, passava, e a crítica nascia desabilitada.
+   */
+  function aplicar(proximo: string[], motivoSeRecusar: string, vagasExigidas = proximo.length) {
+    if (vagasExigidas > TETO_TOOLS_POR_AGENTE) {
       setRecusa(motivoSeRecusar);
       return;
     }
@@ -174,12 +185,14 @@ export function ToolPicker({ value, onChange, disabled }: Props) {
       // produto não permite fazer — o checkbox nasce desabilitado, sem dizer
       // por quê. Ou cabe inteiro, com a vaga da crítica guardada, ou não liga
       // e a tela diz quantas faltam.
-      const excedente = vagasExigidasPeloPacote(value, catalogo, pacote) - TETO_TOOLS_POR_AGENTE;
+      const exigidas = vagasExigidasPeloPacote(value, catalogo, pacote);
+      const excedente = exigidas - TETO_TOOLS_POR_AGENTE;
       aplicar(
         proximo,
         `Ligar este pacote passaria de ${TETO_TOOLS_POR_AGENTE} capacidades (faltam ${excedente} ${
           excedente === 1 ? "vaga" : "vagas"
         }). Desligue um pacote que você usa menos antes.`,
+        exigidas,
       );
     } else {
       setRecusa(null);

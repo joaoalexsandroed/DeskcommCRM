@@ -139,9 +139,17 @@ function makeAdminStub(confidenceThreshold: number) {
               }
             : null; // ai_budgets sem linha = sem throttle; crm_leads sem lead
 
+    // O dublê precisa DIZER em que mundo está (issue #129). O worker agora
+    // pergunta se a org tem agente com versão PUBLICADA — se tem, quem responde
+    // é o agent-engine e ele cede. Estes casos exercitam o caminho legado (sem
+    // publicação), então a consulta discriminada devolve `null`. Sem isto o
+    // Proxy devolveria a MESMA linha de agente para as duas perguntas, e o
+    // worker cederia sempre — os testes ficariam verdes medindo o skip.
+    let consultaDePublicado = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const terminais: any = {
-      maybeSingle: () => Promise.resolve({ data: single, error: null }),
+      maybeSingle: () =>
+        Promise.resolve({ data: consultaDePublicado ? null : single, error: null }),
       single: () => Promise.resolve({ data: single, error: null }),
       insert: (row: Record<string, unknown>) => {
         inserted.push({ table, row });
@@ -191,7 +199,13 @@ function makeAdminStub(confidenceThreshold: number) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const chain: any = new Proxy(terminais, {
-      get: (alvo, prop) => (prop in alvo ? alvo[prop as keyof typeof alvo] : () => chain),
+      get: (alvo, prop) =>
+        prop in alvo
+          ? alvo[prop as keyof typeof alvo]
+          : (...args: unknown[]) => {
+              if (prop === "not" && args[0] === "published_version_id") consultaDePublicado = true;
+              return chain;
+            },
     });
     return chain;
   };

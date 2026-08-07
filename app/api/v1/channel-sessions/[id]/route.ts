@@ -305,7 +305,7 @@ export async function DELETE(
     if (!waha) {
       return fail(
         "waha_not_configured",
-        "O serviço do WhatsApp (WAHA) não está ativo — sem ele o número não pode ser desconectado. Suba o container e tente de novo.",
+        "O WhatsApp (WAHA) não está configurado neste ambiente (faltam WAHA_API_BASE_URL e/ou WAHA_API_KEY) — sem ele o número não pode ser desconectado do aparelho.",
         503,
         { requestId },
       );
@@ -314,8 +314,7 @@ export async function DELETE(
       await waha.logoutSession(session.waha_session_name as string);
       await waha.deleteSession(session.waha_session_name as string);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "unknown";
-      return fail("waha_error", wahaFriendlyError(msg), 502, { requestId });
+      return fail("waha_error", wahaFriendlyError(err), 502, { requestId });
     }
   } else {
     // Revogação do canal oficial: a credencial some e a URL do webhook muda, então

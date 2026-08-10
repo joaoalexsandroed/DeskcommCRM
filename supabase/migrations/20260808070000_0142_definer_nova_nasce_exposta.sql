@@ -1,4 +1,8 @@
--- 0116: função NOVA nasce exposta a anon em quem ATUALIZA (a 0108 fechou só o estoque)
+-- 0142: função NOVA nasce exposta a anon em quem ATUALIZA (a 0108 fechou só o estoque)
+--
+-- Renumerada de 0116 (upstream) para 0142 na integração deste fork: 0116 já
+-- estava em uso aqui por `openrouter_provider.sql`. Conteúdo idêntico ao
+-- upstream, só o número/timestamp mudou.
 --
 -- A 0108 (issue #128) revogou EXECUTE de anon numa LISTA de 8 funções. A lista
 -- estava certa para o banco em que foi medida — um Postgres descartável com o

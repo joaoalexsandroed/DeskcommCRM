@@ -12,8 +12,21 @@ import { MockLanguageModelV3 } from 'ai/test';
 
 import { allowlistedFetch, buildAllowlist } from '../egress';
 
-/** provider name → (chave BYOK da org, id do modelo) → modelo pronto para generateText. */
-export type ProviderRegistry = Record<string, (apiKey: string, modelId: string) => LanguageModel>;
+/**
+ * provider name → (chave BYOK da org, id do modelo, endpoint opcional) → modelo
+ * pronto para generateText.
+ *
+ * O terceiro parâmetro é o endpoint escolhido no painel de provedores
+ * (`ai_purpose_bindings.base_url`). Existe por causa dos dois casos que o
+ * registry precisa atender e que não têm endpoint fixo: um gateway
+ * OpenAI-compatível na frente da OpenRouter e, no roteiro do produto, um modelo
+ * rodando na máquina do próprio cliente. É opcional — os providers canônicos
+ * ignoram e continuam indo ao endpoint intrínseco de terem sido escolhidos.
+ */
+export type ProviderRegistry = Record<
+  string,
+  (apiKey: string, modelId: string, baseUrl?: string) => LanguageModel
+>;
 
 /**
  * Endpoint canônico do provider Anthropic (baseURL default do @ai-sdk/anthropic). NÃO é
@@ -31,6 +44,13 @@ const GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com';
  * volta em `result.providerMetadata.openrouter.usage.cost` (USD) — é o que
  * run-model-call.ts usa em vez da tabela estática de pricing.ts, que não escala
  * pra um catálogo deste tamanho (ver migration 0093).
+ *
+ * Nota de integração (upstream): a main oficial resolveu a mesma necessidade
+ * apontando `@ai-sdk/openai` pra `openrouter.ai/api/v1`, com `baseUrl`
+ * configurável por org (gateway OpenAI-compatível próprio). Mantivemos o SDK
+ * dedicado por já estar em produção aqui com extração de custo real; a
+ * flexibilidade de `baseUrl` custom do upstream NÃO foi trazida nesta
+ * integração — ver task de reconciliação.
  */
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai';
 

@@ -31,6 +31,7 @@ function fakeConfig(agentId: string): PublishedAgentConfig {
     operatorEnabled: false,
   operatorModel: null,
   operatorToolIds: [],
+  pipelineIds: [],
   agentCreatedBy: null,
   };
 }

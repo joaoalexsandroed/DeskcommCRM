@@ -127,9 +127,15 @@ async function buscarDaOpenRouter(): Promise<ModeloDaOpenRouter[]> {
 }
 
 function autorizado(req: NextRequest): boolean {
-  const esperado = env.INTERNAL_CRON_SECRET || env.INTERNAL_SECRET;
-  if (!esperado) return false; // fail-closed
-  return req.headers.get("authorization") === `Bearer ${esperado}`;
+  // Mesmo padrão dos demais crons: aceita QUALQUER uma das duas chaves, não só
+  // a primeira não-vazia. Com `||` simples, uma instalação que define as duas
+  // (o .env.example documenta ambas) e agenda o cron com INTERNAL_SECRET (como
+  // todo o resto do crontab) nunca autentica — INTERNAL_CRON_SECRET vence e
+  // fica sendo a única aceita, 401 todo dia, em silêncio.
+  const aceitas = [env.INTERNAL_CRON_SECRET, env.INTERNAL_SECRET].filter(Boolean);
+  if (aceitas.length === 0) return false; // fail-closed
+  const recebido = req.headers.get("authorization");
+  return aceitas.some((esperado) => recebido === `Bearer ${esperado}`);
 }
 
 async function handler(req: NextRequest): Promise<Response> {

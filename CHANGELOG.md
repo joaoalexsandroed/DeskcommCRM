@@ -8,6 +8,55 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.3.0] — 2026-08-10
+
+Integração com o repositório oficial (`melgarafael/DeskcommCRM`): 193 commits que este fork
+não tinha, reconciliados com o que já era específico daqui (OpenRouter, papéis do agente).
+
+### Adicionado
+
+- **Configuração de IA por ponto do sistema.** Tela nova (Agente de IA → Provedores) que
+  mostra, para cada um dos pontos que chamam modelo (atendimento, classificação de
+  sentimento, embeddings etc.), qual provider/modelo está valendo hoje e por quê — e deixa
+  trocar por ponto, com recusa explícita se o modelo escolhido não tem as capacidades que o
+  ponto exige (ex.: sem tool calling num ponto que precisa criar lead).
+- **Índice de Atrito.** O sistema passa a medir o próprio propósito: abandono, repetição e
+  espera do lado do cliente, não só volume de atividade.
+- **Demanda como entidade de primeira classe.** A conversa vira lead automaticamente no ponto
+  de entrada; o card carrega a demanda, não só a atividade solta.
+- **Confirmação de dado ouvido em conversa.** Quando a IA entende um e-mail ou telefone dito
+  pelo cliente, a mudança fica pendente até um humano confirmar — nunca sobrescreve sozinha.
+- **Terceiro canal (BSP intermediário)**, além de WAHA e WhatsApp oficial.
+- **Colar imagem no composer** com Ctrl+V; aba "Minhas" da inbox para de mostrar conversa já
+  fechada; filtro por tag na inbox.
+- **Tela de execuções de IA** — o que cada chamada fez, quanto custou e por que falhou.
+
+### Corrigido
+
+- **Vazamento de dado entre organizações** em dois caminhos: listagem de negócios e agente
+  de uma organização alcançando negócio de outra.
+- **Mídia que o agente não conseguia ler** (foto/áudio) falhava em silêncio — agora aparece
+  marcador no texto derivado e aviso na Central.
+- **`update.sh` inventava gasto de IA** — trigger de orçamento contava linha de mês passado
+  durante o backfill de unificação de telemetria.
+- **Rotacionar uma credencial de IA apagava a configuração dos pontos** que a usavam, em vez
+  de voltar ao padrão da organização.
+- Bug próprio achado durante a integração: script de medição de vazamento lia um campo morto
+  do catálogo de tools (nenhum consumidor real o lê) — 48 de 51 capacidades divergiam do
+  texto que de fato chega ao modelo.
+
+### Segurança
+
+- **Função nova criada por migration nascia exposta à chave `anon`** em quem já tinha o
+  produto instalado (o `ALTER DEFAULT PRIVILEGES` do baseline persiste no catálogo do banco
+  entre atualizações). Varredura auto-curativa no fim do apêndice, que revoga de toda
+  `security definer` de `public` e devolve só o que cada função de fato precisava.
+
+**⚠️ Requer atenção**
+
+Esta versão traz mudanças de banco (migrations 0122 a 0142) além das já cobertas pela 1.2.x.
+O `update.sh` aplica tudo sozinho e faz backup antes.
+
 ## [1.2.3] — 2026-08-10
 
 ### Corrigido

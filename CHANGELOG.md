@@ -8,6 +8,17 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.2.3] — 2026-08-10
+
+### Corrigido
+
+- **Painel "Testar agente" mostrava "Erro inesperado." em qualquer turno que passasse de 10s**
+  (ex.: quando o modelo chama uma tool). A chamada ao endpoint de teste usava o timeout padrão
+  do cliente HTTP (10s) — um turno real do agent-engine já leva ~6s numa resposta simples sem
+  tool call, e qualquer chamada de tool estoura esse limite. O erro chegava como `AbortError`,
+  que o painel não sabia traduzir pra mensagem específica, então caía no toast genérico em vez
+  de mostrar o motivo real. Agora essa chamada usa `timeoutMs: 60_000`.
+
 ## [1.2.1] — 2026-08-07
 
 ### Corrigido

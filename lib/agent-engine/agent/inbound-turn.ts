@@ -1573,7 +1573,24 @@ export async function runAgentTurn(
                 to_stage: update.transition.to,
                 reason: mirror.reason,
               });
-              if (!MIRROR_WARN_ONLY.has(mirror.reason)) {
+              if (mirror.reason === 'fora_do_escopo') {
+                // Aviso PRÓPRIO, e não o de falha: nada quebrou — a regra
+                // funcionou. Dizer "falhou" aqui mandaria o dono procurar um
+                // defeito que não existe, e "reconcilie manualmente" seria
+                // instrução errada: ele não deve mover o card, deve decidir se
+                // libera o funil para este assistente.
+                await insertInboxItem(pool, tenantId, {
+                  kind: 'other',
+                  title: 'O assistente quis organizar um negócio de um funil que não é dele',
+                  body:
+                    `O assistente concluiu que este negócio deveria ir para "${update.transition.to}", ` +
+                    `mas ele não cuida do funil onde o negócio está (${mirror.detail}). ` +
+                    `Ninguém mexeu no card. Se ele deveria cuidar desse funil, marque isso na ` +
+                    `configuração do assistente; se não, não há nada a fazer.`,
+                  refKind: 'lead',
+                  refId: leadId,
+                });
+              } else if (!MIRROR_WARN_ONLY.has(mirror.reason)) {
                 await insertInboxItem(pool, tenantId, {
                   kind: 'other',
                   title: 'Espelho de stage no CRM falhou — funil possivelmente inconsistente',

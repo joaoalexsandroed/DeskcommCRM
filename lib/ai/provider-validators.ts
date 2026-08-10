@@ -8,8 +8,19 @@
  *
  * Timeout 5s, sem retry. Erros 401 são distintos de erros de rede.
  */
+import { PROVEDORES } from "@/lib/ai/pontos/provedores";
 
-export type Provider = "anthropic" | "openai" | "google" | "openrouter";
+/**
+ * Os provedores cuja CHAVE este arquivo sabe validar.
+ *
+ * Derivado de `lib/ai/pontos/provedores.ts`, que é a lista única desde a
+ * migration 0127 — quando ela era repetida à mão aqui, na rota de credenciais,
+ * no diálogo da tela e em `lib/ai/agents/validation.ts`, a 0127 abriu o banco
+ * para a OpenRouter e as quatro cópias continuaram recusando. O resultado era
+ * uma tela que oferecia OpenRouter num ponto e não tinha onde cadastrar a
+ * chave dela.
+ */
+export type Provider = (typeof PROVEDORES)[number]["id"];
 
 export interface ValidationOk {
   ok: true;
@@ -109,6 +120,11 @@ export async function validateGoogleKey(apiKey: string): Promise<ValidationResul
  * `/api/v1/auth/key` valida a chave mas não devolve catálogo. Por isso são DUAS
  * chamadas — a 1ª só confirma 401/403, a 2ª busca o catálogo pra popular
  * `models_available` do mesmo jeito que os outros 3 providers.
+ *
+ * (Nota de integração: a main oficial valida só por `/api/v1/models`,
+ * assumindo que ele também autentica — mantivemos as duas chamadas porque
+ * essa suposição foi testada e refutada aqui: `/models` responde 200 mesmo
+ * com chave inválida, o que marcaria credencial quebrada como "validada".)
  */
 export async function validateOpenRouterKey(apiKey: string): Promise<ValidationResult> {
   try {
@@ -152,8 +168,11 @@ export function validateProviderKey(
     case "openrouter":
       return validateOpenRouterKey(apiKey);
     default: {
-      const exhaustive: never = provider;
-      return Promise.resolve({ ok: false, error: `unknown_provider:${exhaustive}` });
+      // Sem `never` aqui: `Provider` agora é derivado de PROVEDORES, e a lista
+      // cresce sem que este arquivo saiba. Provedor novo cadastrado antes de
+      // ganhar validador devolve um erro que DIZ isso, em vez de quebrar o
+      // build de quem só acrescentou uma linha na lista.
+      return Promise.resolve({ ok: false, error: `unknown_provider:${provider}` });
     }
   }
 }

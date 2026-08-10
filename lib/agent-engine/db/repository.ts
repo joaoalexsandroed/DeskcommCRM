@@ -37,7 +37,9 @@ export type InboxKind =
   | 'reactivation_expired'
   | 'capabilities_missing'
   | 'message_send_stuck'
+  | 'midia_nao_lida'
   | 'promise_unfulfilled'
+  | 'contact_proposal_expired'
   | 'other';
 
 export interface InboxItemRow {

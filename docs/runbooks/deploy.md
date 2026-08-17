@@ -95,3 +95,40 @@ nenhum, revertendo o que você acabou de subir.
 Requisitos: >= 4 GB de RAM **ou** swap (medido: ~4min num VPS de 3.8 GB com 4 GB
 de swap). Ao terminar, feche o ciclo — merge na `main` e volte a VPS pra imagem
 oficial.
+
+---
+
+## 5. Templates de e-mail do Supabase Auth (não pule em projeto novo)
+
+**Sintoma:** link de "Redefinir senha" (ou de confirmação de cadastro) sempre
+cai em "Link inválido ou expirado" na `/login`, mesmo clicando direto no
+e-mail, na primeira vez, sem demora (2026-08-09).
+
+**Causa raiz:** `supabase/templates/recovery.html` (e `confirmation.html`) só
+são aplicados automaticamente em instância **local** (`supabase start`) ou se
+alguém rodar `supabase config push` pra sincronizar `config.toml` com o
+projeto Cloud. Um projeto Supabase Cloud novo (`*.supabase.co`) nasce com o
+template padrão do Supabase, que usa `{{ .ConfirmationURL }}` — um link pro
+próprio endpoint do GoTrue (`/auth/v1/verify?token=pkce_...`), formato PKCE.
+`app/auth/confirm/route.ts` só sabe ler `token_hash` + `type` da query string
+(o formato do template customizado, com `{{ .TokenHash }}`). Os dois formatos
+são incompatíveis — o handler recebe `token_hash=null` e redireciona pra
+`link_invalido` mesmo com um token do GoTrue válido.
+
+**Fix, uma vez por projeto Supabase Cloud (dashboard, não tem como automatizar
+via CI hoje):**
+
+1. **Authentication → Email Templates → Reset Password** (e **Confirm signup**)
+   — cole o conteúdo de [`supabase/templates/recovery.html`](../../supabase/templates/recovery.html)
+   (e `confirmation.html`) no lugar do template padrão.
+2. **Authentication → URL Configuration → Redirect URLs** — confirme que o
+   domínio de produção + `/auth/confirm` está na allowlist
+   (ex.: `https://SEU-DOMINIO/auth/confirm`), senão `{{ .RedirectTo }}` sai
+   vazio/errado mesmo com o template certo.
+3. Links **já enviados antes do fix continuam quebrados** — peça um link novo
+   pra testar.
+
+**Prevenção:** todo setup de projeto Supabase Cloud novo (produção, staging,
+ou clone de self-hoster que optou por Cloud em vez de GoTrue self-host) deve
+passar por este passo antes de considerar o auth "pronto". Adicionar ao
+checklist de onboarding de projeto novo se/quando ele existir.

@@ -8,6 +8,16 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.3.1] — 2026-08-10
+
+### Corrigido
+
+- **`sync-model-catalog` (cron diário do catálogo da OpenRouter) rejeitava com 401 toda
+  instalação que define `INTERNAL_CRON_SECRET` e `INTERNAL_SECRET` com valores diferentes**
+  (o `.env.example` documenta as duas). A rota usava `||` para escolher uma só antes de
+  comparar, diferente de todo o resto dos crons (que aceitam qualquer uma das duas). O
+  crontab agenda com `INTERNAL_SECRET`, então o sync nunca autenticava sozinho.
+
 ## [1.3.0] — 2026-08-10
 
 Integração com o repositório oficial (`melgarafael/DeskcommCRM`): 193 commits que este fork

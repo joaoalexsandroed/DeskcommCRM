@@ -8,6 +8,45 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.4.0] — 2026-08-18
+
+Segunda integração com o repositório oficial (`melgarafael/DeskcommCRM`): 453 commits que
+este fork não tinha, reconciliados com o que já era específico daqui (integração com VPS
+Orion/Traefik-Swarm, provider OpenRouter dedicado, publicação das três imagens no registro
+do próprio fork). Traz white-label (marca própria), sistema de follow-up vivo, onboarding
+com wizard, orçamento de IA que efetivamente para o gasto, e uma leva de correções de
+segurança do relatório da comunidade (isolamento entre organizações, MFA de admin, open
+redirect, ReDoS).
+
+### Segurança
+
+- **Vazamento de dado entre organizações** em dois caminhos: listagem de negócios e agente
+  de uma organização alcançando negócio de outra.
+- **A verificação em duas etapas do administrador valia só na tela** — quem tinha a senha
+  mas não o segundo fator alcançava rotas sensíveis por fora da UI.
+- **Link de login podia levar para um site estranho** (open redirect no fluxo de MFA).
+- **Automação de webhook podia alcançar a rede interna do servidor** (SSRF) — o endereço
+  agora é resolvido de verdade antes de qualquer envio.
+- **Convite: quem aceitava um convite sem ter conta ganhava uma organização própria além da
+  do convite.** Corrigido com `decidirConviteDoSignup()`, que falha fechado em token
+  inválido ou expirado.
+
+### Adicionado
+
+- Marca própria (white-label): nome, logo e cor por instalação e por organização.
+- Sistema de follow-up vivo: nasce sozinho, tem ramos nomeados, pausa/retoma/adia sem matar
+  o fluxo, e tempo de espera adaptativo decidido pela IA.
+- Onboarding com wizard: monta o quadro de clientes, testa a chave de IA e apresenta o
+  sistema em vez de despejar num inbox vazio.
+- Orçamento de IA passa a valer de verdade (antes só a tela existia; nenhuma instalação
+  estava protegida).
+
+### ⚠️ Requer atenção
+
+Esta versão traz um volume grande de mudanças de banco. O `update.sh` aplica tudo sozinho
+e faz backup antes — não precisa rodar nada à mão. Numa instalação que está há muito tempo
+sem atualizar, é normal a etapa do banco demorar mais.
+
 ## [1.3.1] — 2026-08-10
 
 ### Corrigido

@@ -120,6 +120,7 @@ fonte só (`lib/onboarding/passos.ts`) — eram três listas que discordavam. Ga
 | J4.4 | Ganhar lead (mover pra "Pago") | status won + `closed_at` |
 | J4.5 | Perder lead exige motivo | sem motivo → validação clara |
 | J4.6 | Filtro por owner | leads coerentes com filtro |
+| J4.6b | Filtro por campo customizado do pipeline (select) | URL ganha `?cf=`, card sem o valor escolhido some · spec pronto (`tests/e2e/kanban-custom-field-filter.spec.ts`, seed `scripts/seed-e2e-kanban-custom-field.ts`) — **NÃO EXECUTADO**: indisponibilidade do classificador de segurança do Bash nesta sessão impediu subir o Supabase local e rodar o Playwright |
 | J4.7 | Bulk: mover/taguear 2+ leads | funciona; automações disparam por lead |
 | J4.8 | Timeline do contato mostra atividades do lead | merge contato+leads correto |
 | J4.9 | Vocabulário customizado (Pedido/Pago/Cancelado) | UI reflete em todo o kanban |

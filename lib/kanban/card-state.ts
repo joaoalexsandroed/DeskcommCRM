@@ -1,6 +1,7 @@
 import type { ScoreBand } from "@/lib/kanban/score-band";
 import { resolveLeadOwner, type OwnerDisplay } from "@/lib/kanban/owner";
 import type { Lead } from "@/lib/types/leads";
+import type { CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 
 /**
  * O que o card do Kanban precisa saber — e SÓ isso.
@@ -59,6 +60,14 @@ export interface CardInput {
   canonicalTag?: string | null;
   /** Todas as tags — fora do card, acessíveis no hover. */
   tags: string[];
+  /**
+   * Campos customizados preenchidos (`pipeline.settings.fields` × `custom_fields`),
+   * já formatados como "Rótulo: valor" e prontos pro hover — mesmo tratamento
+   * das tags (Lei A: sai do card, fica a um hover, sem ocupar altura). Nunca no
+   * corpo do card: o orçamento é fixo e o schema é livre (o tenant pode
+   * cadastrar 50 campos), então não há altura que caiba todos.
+   */
+  customFieldsPreview?: string | null;
 }
 
 /**
@@ -82,6 +91,7 @@ export function buildCardInput(
     | "owner_agent"
     | "next_action"
     | "score"
+    | "custom_fields"
   >,
   opts: {
     stageName: string;
@@ -92,6 +102,8 @@ export function buildCardInput(
     reactivations?: Map<string, { proposalId: string; expiresAt: string }>;
     /** `crm_pipelines.settings.canonical_tags` — só a primeira que o lead tiver. */
     canonicalTags?: string[];
+    /** `crm_pipelines.settings.fields` — schema declarativo dos campos customizados. */
+    pipelineFields?: CustomFieldDef[];
     now?: Date;
   },
 ): CardInput {
@@ -128,7 +140,56 @@ export function buildCardInput(
     nextAction: lead.next_action ? { label: lead.next_action.label } : null,
     canonicalTag: (opts.canonicalTags ?? []).find((t) => lead.tags.includes(t)) ?? null,
     tags: lead.tags,
+    customFieldsPreview: formatCustomFieldsPreview(lead.custom_fields, opts.pipelineFields),
   };
+}
+
+/** Teto de campos no hover — cota se preenche, tooltip gigante não é achado. */
+const MAX_CUSTOM_FIELDS_PREVIEW = 3;
+const MAX_CUSTOM_FIELD_VALUE_CHARS = 40;
+
+/** "Sim"/"Não" — evita `String(true)` = "true" no hover. */
+function formatCustomFieldValue(def: CustomFieldDef, raw: unknown): string | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  switch (def.type) {
+    case "boolean":
+      return raw ? "Sim" : "Não";
+    case "multiselect": {
+      if (!Array.isArray(raw) || raw.length === 0) return null;
+      const labels = raw.map((v) => def.options?.find((o) => o.value === v)?.label ?? String(v));
+      return labels.join(", ");
+    }
+    case "select":
+      return def.options?.find((o) => o.value === raw)?.label ?? String(raw);
+    default: {
+      const text = String(raw).trim();
+      if (!text) return null;
+      return text.length > MAX_CUSTOM_FIELD_VALUE_CHARS
+        ? `${text.slice(0, MAX_CUSTOM_FIELD_VALUE_CHARS)}…`
+        : text;
+    }
+  }
+}
+
+/**
+ * "Observação: Cliente pediu retorno em outubro · Vencimento: 2026-10-01" —
+ * só os campos PREENCHIDOS, na ordem do schema, prontos pro `title=` do card.
+ *
+ * `null` quando não há nada a mostrar (schema vazio ou tudo em branco): o
+ * chamador decide não renderizar `title` nenhum, em vez de um tooltip vazio.
+ */
+function formatCustomFieldsPreview(
+  values: Record<string, unknown> | undefined,
+  fields: CustomFieldDef[] | undefined,
+): string | null {
+  if (!values || !fields || fields.length === 0) return null;
+  const parts: string[] = [];
+  for (const def of fields) {
+    if (parts.length >= MAX_CUSTOM_FIELDS_PREVIEW) break;
+    const formatted = formatCustomFieldValue(def, values[def.key]);
+    if (formatted) parts.push(`${def.label}: ${formatted}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** O conteúdo da faixa ③ — um por vez, nunca acumulado. */

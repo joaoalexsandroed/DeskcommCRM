@@ -4,6 +4,7 @@ import { useRef } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useLeadTimeline } from "@/hooks/leads/useLeadTimeline";
 import type { Lead } from "@/lib/types/leads";
+import type { CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 import { ConversaNoDossie } from "./ConversaNoDossie";
 import { LeadFieldsForm } from "./LeadFieldsForm";
 import { ScoreSlot } from "./ScoreSlot";
@@ -18,6 +19,8 @@ interface Props {
   pipelineId: string;
   stageName: string;
   ownerNames?: Map<string, string | null>;
+  /** Schema declarativo de `pipeline.settings.fields` — vazio = pipeline sem campo customizado. */
+  pipelineFields?: CustomFieldDef[];
 }
 
 function formatBRL(cents: number | null, currency: string | null): string {
@@ -53,6 +56,7 @@ export function LeadDossier({
   pipelineId,
   stageName,
   ownerNames,
+  pipelineFields,
 }: Props) {
   const campos = useRef<HTMLDivElement | null>(null);
   const timeline = useLeadTimeline(open ? lead.id : null, lead.contact_id);
@@ -141,7 +145,7 @@ export function LeadDossier({
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
             Dados do negócio
           </h3>
-          <LeadFieldsForm lead={lead} pipelineId={pipelineId} />
+          <LeadFieldsForm lead={lead} pipelineId={pipelineId} pipelineFields={pipelineFields} />
         </div>
       </SheetContent>
     </Sheet>

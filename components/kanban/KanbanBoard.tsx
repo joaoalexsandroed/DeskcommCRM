@@ -11,6 +11,7 @@ import { useReactivations } from "@/hooks/leads/useReactivations";
 import { midpoint } from "@/lib/kanban/fractional-indexing";
 import type { Lead } from "@/lib/types/leads";
 import type { Pipeline, Stage } from "@/lib/kanban/types";
+import type { CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 import { StageColumn } from "./StageColumn";
 import { LeadDossier } from "./LeadDossier";
 
@@ -109,6 +110,14 @@ export function KanbanBoard({
   const canonicalTags = useMemo(() => {
     const raw = (pipelineProp ?? queryResult.data?.pipeline)?.settings?.canonical_tags;
     return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string") : [];
+  }, [pipelineProp, queryResult.data?.pipeline]);
+
+  // Schema declarativo de campos customizados do pipeline (settings.fields) —
+  // mesmo padrão de canonicalTags acima: já existe em settings, o dossiê só
+  // precisa ler.
+  const pipelineFields = useMemo(() => {
+    const raw = (pipelineProp ?? queryResult.data?.pipeline)?.settings?.fields;
+    return Array.isArray(raw) ? (raw as CustomFieldDef[]) : [];
   }, [pipelineProp, queryResult.data?.pipeline]);
 
   // O dossiê é do BOARD e não da página: ele precisa do lead inteiro e do nome
@@ -244,6 +253,7 @@ export function KanbanBoard({
             reactivations={reactivations}
             pulses={pulsesProp ?? queryResult.pulses}
             canonicalTags={canonicalTags}
+            pipelineFields={pipelineFields}
             selectedLeadIds={selectedLeadIds}
             onSelect={handleSelect}
             onOpen={setDossieId}
@@ -260,6 +270,7 @@ export function KanbanBoard({
             data.stages.find((s) => s.id === leadDoDossie.stage_id)?.name ?? "—"
           }
           ownerNames={ownerNames}
+          pipelineFields={pipelineFields}
         />
       )}
     </DragDropContext>

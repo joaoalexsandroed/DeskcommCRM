@@ -30,6 +30,14 @@ interface KanbanCardProps {
   onOpen?: (leadId: string) => void;
 }
 
+/** Tags + campos customizados, num hover só — nenhum dos dois ocupa o corpo do card. */
+function cardTooltip(card: CardInput): string | undefined {
+  const parts: string[] = [];
+  if (card.tags.length > 0) parts.push(`Tags: ${card.tags.join(", ")}`);
+  if (card.customFieldsPreview) parts.push(card.customFieldsPreview);
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
 function formatBRL(cents: number | null, currency: string | null): string | null {
   if (cents == null) return null;
   const code = currency ?? "BRL";
@@ -95,8 +103,10 @@ export function KanbanCard({
           role="group"
           aria-label={`Lead: ${card.title}`}
           onClick={handleClick}
-          // Tags saem do card (Lei A): ficam a um hover, sem ocupar altura.
-          title={card.tags.length > 0 ? `Tags: ${card.tags.join(", ")}` : undefined}
+          // Tags e campos customizados saem do card (Lei A): ficam a um hover,
+          // sem ocupar altura — o schema é livre (o tenant define quantos
+          // campos quiser) e não há orçamento fixo que caiba todos.
+          title={cardTooltip(card)}
           className={cn(
             "group relative overflow-hidden rounded-md border border-border bg-surface",
             "py-2.5 pl-3 pr-3 shadow-xs transition-colors",

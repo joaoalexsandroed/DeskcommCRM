@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import type { Lead } from "@/lib/types/leads";
 import type { Stage } from "@/lib/kanban/types";
 import { buildCardInput } from "@/lib/kanban/card-state";
+import type { CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 import { KanbanCard } from "./KanbanCard";
 
 interface StageColumnProps {
@@ -19,6 +20,8 @@ interface StageColumnProps {
   reactivations?: Map<string, { proposalId: string; expiresAt: string }>;
   /** `settings.canonical_tags` do pipeline — a única tag que fica no card. */
   canonicalTags?: string[];
+  /** `settings.fields` do pipeline — vira preview no hover do card, nunca no corpo. */
+  pipelineFields?: CustomFieldDef[];
   selectedLeadIds?: Set<string>;
   /** leadId → quantos eventos remotos já chegaram (muda = pulsa de novo). */
   pulses?: Map<string, number>;
@@ -47,6 +50,7 @@ export function StageColumn({
   coolingIds,
   reactivations,
   canonicalTags,
+  pipelineFields,
   selectedLeadIds,
   pulses,
   onSelect,
@@ -101,6 +105,7 @@ export function StageColumn({
                   coolingIds,
                   reactivations,
                   canonicalTags,
+                  pipelineFields,
                 })}
                 lead={lead}
                 index={idx}

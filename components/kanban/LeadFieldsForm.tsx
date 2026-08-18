@@ -1,5 +1,5 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -11,6 +11,7 @@ import { useEditLead } from "@/hooks/kanban/useUpdateLead";
 import type { Lead } from "@/lib/types/leads";
 import { updateLeadSchema, type UpdateLeadInput } from "@/lib/schemas/leads";
 import { parseReaisToCents } from "@/lib/money";
+import { CustomFieldsEditor, type CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 import { EcoDoValor } from "./EcoDoValor";
 
 interface FormShape {
@@ -24,6 +25,8 @@ interface FormShape {
 interface Props {
   lead: Lead;
   pipelineId: string;
+  /** Schema declarativo de `pipeline.settings.fields` — vazio = sem campo customizado a editar. */
+  pipelineFields?: CustomFieldDef[];
   /** Quando o salvamento dá certo. O dossiê NÃO fecha aqui — ver abaixo. */
   onSaved?: () => void;
   /** O dossiê não tem "cancelar"; o diálogo tem. */
@@ -44,8 +47,9 @@ function centsToReais(cents: number | null | undefined): string {
  * registro justamente de quem o produziu — a funcionalidade que prova "sua ação
  * fica registrada" provaria isso para todo mundo menos para o autor.
  */
-export function LeadFieldsForm({ lead, pipelineId, onSaved, onCancel }: Props) {
+export function LeadFieldsForm({ lead, pipelineId, pipelineFields, onSaved, onCancel }: Props) {
   const edit = useEditLead(pipelineId);
+  const fields = pipelineFields ?? [];
 
   const form = useForm<FormShape>({
     defaultValues: {
@@ -57,6 +61,15 @@ export function LeadFieldsForm({ lead, pipelineId, onSaved, onCancel }: Props) {
     },
   });
 
+  // Estado à parte do react-hook-form: o shape é dinâmico (schema do pipeline),
+  // então não cabe em `FormShape`. Semeado do lead INTEIRO (não só das chaves
+  // conhecidas do schema) para chaves órfãs — ex.: gravadas por webhook antes
+  // de existirem no schema do pipeline — sobreviverem ao salvamento em vez de
+  // serem apagadas por um editor que não as conhece.
+  const [customFields, setCustomFields] = useState<Record<string, unknown>>(
+    lead.custom_fields ?? {},
+  );
+
   useEffect(() => {
     form.reset({
       title: lead.title,
@@ -65,6 +78,9 @@ export function LeadFieldsForm({ lead, pipelineId, onSaved, onCancel }: Props) {
       tagsRaw: (lead.tags ?? []).join(", "),
       expected_close_date: lead.expected_close_date ?? "",
     });
+    // Mesmo padrão do form.reset() acima: sincroniza estado local com o lead que trocou.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCustomFields(lead.custom_fields ?? {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead.id]);
 
@@ -91,6 +107,13 @@ export function LeadFieldsForm({ lead, pipelineId, onSaved, onCancel }: Props) {
       tags,
       expected_close_date: values.expected_close_date || null,
     };
+    // Só manda `custom_fields` quando o pipeline TEM schema — sem isso, um
+    // pipeline sem campo nenhum sobrescreveria com `{}` qualquer valor que já
+    // exista na coluna (ex.: gravado por webhook), num formulário que nem
+    // mostra o editor.
+    if (fields.length > 0) {
+      patch.custom_fields = customFields;
+    }
 
     const parsed = updateLeadSchema.safeParse(patch);
     if (!parsed.success) {
@@ -157,6 +180,21 @@ export function LeadFieldsForm({ lead, pipelineId, onSaved, onCancel }: Props) {
           <Label htmlFor="tagsRaw">Tags (separadas por vírgula)</Label>
           <Input id="tagsRaw" placeholder="vip, recompra" {...form.register("tagsRaw")} />
         </div>
+
+        {fields.length > 0 && (
+          <div className="space-y-2 border-t border-border pt-4">
+            <Label className="text-xs uppercase tracking-wide text-text-muted">
+              Campos do funil
+            </Label>
+            <CustomFieldsEditor
+              fields={fields}
+              value={customFields}
+              onChange={setCustomFields}
+              mode="lead"
+              disabled={edit.isPending}
+            />
+          </div>
+        )}
 
       <div className="flex justify-end gap-2">
         {onCancel && (

@@ -14,6 +14,7 @@ import { useUser } from "@/hooks/auth/AuthProvider";
 import { useAssignableMembers } from "@/hooks/inbox/useAssignableMembers";
 import { useAssignableAgents } from "@/hooks/kanban/useAssignableAgents";
 import type { Lead, OwnerKind } from "@/lib/types/leads";
+import type { CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 import { OwnerBadge } from "./OwnerBadge";
 import {
   agentOwnerFilter,
@@ -26,6 +27,8 @@ interface FilterBarProps {
   filters: LeadFilters;
   onChange: (next: LeadFilters) => void;
   leads: Lead[];
+  /** Schema declarativo do pipeline — vazio = sem filtro por campo customizado a oferecer. */
+  pipelineFields?: CustomFieldDef[];
 }
 
 const STATUS_OPTIONS: Array<{ value: NonNullable<LeadFilters["status"]>; label: string }> = [
@@ -35,11 +38,22 @@ const STATUS_OPTIONS: Array<{ value: NonNullable<LeadFilters["status"]>; label: 
   { value: "lost", label: "Perdidos" },
 ];
 
-export function FilterBar({ filters, onChange, leads }: FilterBarProps) {
+export function FilterBar({ filters, onChange, leads, pipelineFields }: FilterBarProps) {
   const user = useUser();
   const { data: members } = useAssignableMembers(true);
   const { data: agents } = useAssignableAgents(true);
   const [searchInput, setSearchInput] = useState(filters.search ?? "");
+  const fields = pipelineFields ?? [];
+
+  function setCustomField(key: string, value: unknown) {
+    const next = { ...(filters.customFields ?? {}) };
+    if (value === undefined || value === null || value === "") {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+    onChange({ ...filters, customFields: next });
+  }
 
   // Debounce search 250ms
   useEffect(() => {
@@ -212,10 +226,68 @@ export function FilterBar({ filters, onChange, leads }: FilterBarProps) {
         Apenas atrasados
       </label>
 
+      {/*
+        Um controle por campo do schema — dropdown pra tipos fechados
+        (select/multiselect/boolean, mesmo padrão do filtro de Tag acima),
+        input livre pra texto/número/data (mesmo padrão da busca). Nunca
+        reusa o CustomFieldsEditor de edição: filtro precisa de um estado a
+        mais que edição não tem ("qualquer valor"), e os dois casos divergem
+        cedo o bastante pra não valer forçar um componente só.
+      */}
+      {fields.map((def) => {
+        const value = filters.customFields?.[def.key];
+        if (def.type === "select" || def.type === "multiselect" || def.type === "boolean") {
+          const options =
+            def.type === "boolean"
+              ? [
+                  { value: "true", label: "Sim" },
+                  { value: "false", label: "Não" },
+                ]
+              : (def.options ?? []);
+          const current = options.find((o) => o.value === value)?.label ?? def.label;
+          return (
+            <DropdownMenu key={def.key}>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  {def.label}: {value === undefined ? "Todos" : current}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onClick={() => setCustomField(def.key, undefined)}>
+                  Todos
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {options.map((o) => (
+                  <DropdownMenuItem key={o.value} onClick={() => setCustomField(def.key, o.value)}>
+                    {o.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          );
+        }
+        return (
+          <Input
+            key={def.key}
+            type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
+            placeholder={def.label}
+            value={typeof value === "string" || typeof value === "number" ? String(value) : ""}
+            onChange={(e) =>
+              setCustomField(
+                def.key,
+                def.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value,
+              )
+            }
+            className="h-9 w-40"
+          />
+        );
+      })}
+
       {(filters.search ||
         filters.owner ||
         filters.tag ||
         filters.overdueOnly ||
+        (filters.customFields && Object.keys(filters.customFields).length > 0) ||
         (filters.status && filters.status !== "all")) && (
         <Button
           variant="ghost"

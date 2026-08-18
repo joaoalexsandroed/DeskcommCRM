@@ -8,6 +8,16 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Kanban filtra por campo customizado do pipeline.** A v1.4.2 tornou os campos customizados
+  editáveis e visíveis; faltava filtrar por eles. `FilterBar` agora desenha um controle por
+  campo do schema (`pipeline.settings.fields`) — dropdown para `select`/`multiselect`/`boolean`
+  (mesmo padrão do filtro de Tag), input livre para texto/número/data (mesmo padrão da busca).
+  O filtro combinado vai para a URL num único param JSON (`cf`) para não poluir a query string
+  com um param por campo — um pipeline pode ter até 50. Busca geral (`q`) também passou a
+  varrer o texto dos campos customizados escalares.
+
 ## [1.4.2] — 2026-08-18
 
 ### Adicionado

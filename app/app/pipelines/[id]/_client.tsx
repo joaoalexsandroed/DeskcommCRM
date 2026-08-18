@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Plus } from "@/lib/ui/icons";
 import type { LeadFilters } from "@/lib/kanban/filters";
 import { applyFilters, filtersFromParams, filtersToParams } from "@/lib/kanban/filters";
+import type { CustomFieldDef } from "@/components/contacts/CustomFieldsEditor";
 
 export function PipelinePageClient({
   pipelineId,
@@ -50,7 +51,14 @@ export function PipelinePageClient({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [newOpen, setNewOpen] = useState(false);
 
-  const filteredLeads = data ? applyFilters(data.leads, filters) : [];
+  // Mesmo padrão de canonicalTags/pipelineFields no KanbanBoard: lê
+  // settings.fields direto do pipeline já carregado, sem fetch a mais.
+  const pipelineFields = useMemo(() => {
+    const raw = data?.pipeline?.settings?.fields;
+    return Array.isArray(raw) ? (raw as CustomFieldDef[]) : [];
+  }, [data?.pipeline]);
+
+  const filteredLeads = data ? applyFilters(data.leads, filters, pipelineFields) : [];
 
   return (
     <div
@@ -90,7 +98,12 @@ export function PipelinePageClient({
           stages={data.stages}
         />
       )}
-      <FilterBar filters={filters} onChange={setFilters} leads={data?.leads ?? []} />
+      <FilterBar
+        filters={filters}
+        onChange={setFilters}
+        leads={data?.leads ?? []}
+        pipelineFields={pipelineFields}
+      />
       {error ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm">
           Não consegui carregar este funil:{" "}

@@ -80,11 +80,17 @@ const servicos = lerServicos(compose);
 const NOSSOS = ["app", "worker", "scheduler"] as const;
 
 describe("packaging — o artefato que o cliente instala", () => {
-  it("o parser enxerga os 7 serviços de produção", () => {
+  it("o parser enxerga os 6 serviços de produção", () => {
     // Guarda do próprio instrumento: se o parser parar de enxergar os serviços,
     // todos os testes abaixo passariam vazios — verde por não ter medido nada.
+    //
+    // Sem `caddy` de propósito nesta instalação (variante ORION — ver o
+    // cabeçalho de docker-compose.prod.yml e PATCH-ORION.md): o Traefik já
+    // existente na VPS assume TLS/roteamento por labels no serviço `app`, e
+    // não há um segundo proxy reverso no compose. Quem precisar do `caddy`
+    // original usa a `main`/upstream.
     expect([...servicos.keys()].sort()).toEqual(
-      ["app", "caddy", "redis", "scheduler", "srh", "waha", "worker"].sort(),
+      ["app", "redis", "scheduler", "srh", "waha", "worker"].sort(),
     );
   });
 

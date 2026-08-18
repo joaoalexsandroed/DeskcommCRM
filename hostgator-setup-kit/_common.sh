@@ -359,6 +359,24 @@ write_stack_envfile() {
   done < "$src"
 }
 
+# Gera uma cópia do compose SEM `pull_policy:` — `docker stack deploy` rejeita
+# essa chave de vez ("Additional property pull_policy is not allowed", erro
+# de schema, não aviso ignorável como `build:`/`restart:`/`mem_limit:`), então
+# não dá para simplesmente deployar `$COMPOSE` na variante Swarm.
+#
+# A chave continua no `docker-compose.prod.yml` de verdade — não é opcional:
+# é quem faz `docker compose up -d` (variante sem Swarm) atualizar sozinho
+# quando a tag é móvel (`:stable`) e NÃO depender do GHCR estar de pé quando a
+# tag é fixa (invariante 5, docs/doctrine/packaging.md, vigiado por
+# tests/unit/packaging-artefato-do-cliente.test.ts). Quem cobre essa garantia
+# no lado Swarm é o `docker compose pull` explícito ANTES do deploy, alguns
+# comandos acima em stack_up() — a stack nunca depende de pull_policy para
+# saber se busca imagem nova.
+write_stack_composefile() {
+  local src="${1:-$COMPOSE}" dst="${2:-.compose.stack.yml}"
+  grep -v '^\s*pull_policy:' "$src" > "$dst"
+}
+
 # Builda a imagem do worker (Swarm nunca builda — precisa existir local antes
 # do `docker stack deploy`) e sobe/atualiza a stack inteira. Em VPS sem
 # Traefik/JANet, faz o `docker compose up -d` de sempre (o `build:` do worker
@@ -384,9 +402,11 @@ stack_up() {
     # Swarm só aceita rede overlay pra serviço (a 'internal' do compose vanilla
     # é bridge) — ver comentário em docker-compose.prod.yml.
     export INTERNAL_NETWORK_DRIVER=overlay
+    # Cópia sem `pull_policy:` — ver write_stack_composefile() acima.
+    write_stack_composefile "$COMPOSE" .compose.stack.yml
     # --resolve-image never: não deixa o Swarm tentar resolver/checar a tag do
     # worker contra um registro (ela só existe local) — usa o que já tem aqui.
-    docker stack deploy --resolve-image never -c "$COMPOSE" "$STACK_NAME"
+    docker stack deploy --resolve-image never -c .compose.stack.yml "$STACK_NAME"
     # Tag igual (deskcommcrm-app:local, deskcommcrm-worker:local) +
     # `--resolve-image never`: o Swarm compara a SPEC, não o conteúdo da
     # imagem, e um rebuild local (mesma tag, digest novo) não conta como

@@ -53,12 +53,13 @@ services:
     # perdeu a chave. Nenhum desses casos quer código não lançado; quem quiser o
     # topo da main pede `APP_IMAGE=…:latest` explicitamente.
     image: ${APP_IMAGE:-ghcr.io/melgarafael/deskcommcrm:stable}
-    # pull_policy removido: `docker stack deploy` (Swarm) rejeita essa chave
-    # ("Additional property pull_policy is not allowed"). Quem garante a
-    # imagem atualizada nesta variante é o `docker compose pull` explícito
-    # em stack_up() (_common.sh), antes do deploy — reintroduzida sem querer
-    # pela fusão com o repositório oficial na v1.4.0 (a v1.3.1 já não tinha
-    # esta chave, pelo mesmo motivo).
+    # Invariante 5 (docs/doctrine/packaging.md): tag MÓVEL usa 'always' (senão
+    # a versão nova nunca chega), tag IMUTÁVEL usa 'missing' (senão o CRM só
+    # sobe se o GHCR estiver de pé). `docker stack deploy` (Swarm) rejeita esta
+    # chave — variante ORION deploya uma cópia SEM ela (write_stack_composefile
+    # em _common.sh); o `docker compose pull` explícito em stack_up(), antes do
+    # deploy, é quem garante a imagem atualizada nesse caminho.
+    pull_policy: ${APP_PULL_POLICY:-always}
     restart: unless-stopped
     # ${ENV_FILE:-.env}: `docker stack deploy` (Swarm) não remove as aspas
     # simples que o install.sh grava em cada valor do .env (diferente do
@@ -168,7 +169,8 @@ services:
     # pra tag publicada da versão instalada (mesmo padrão do APP_IMAGE) e
     # usamos só esta chave.
     image: ${WORKER_IMAGE:-ghcr.io/melgarafael/deskcomm-worker:stable}
-    # pull_policy removido — ver o comentário equivalente no serviço `app`.
+    # Invariante 5 — ver o comentário equivalente no serviço `app`.
+    pull_policy: ${WORKER_PULL_POLICY:-always}
     build:
       context: .
       dockerfile: Dockerfile.worker
@@ -290,7 +292,8 @@ services:
     # voltava se a VPS tivesse internet e o mirror do Alpine estivesse de pé,
     # justamente no momento em que a máquina está se recuperando de algo.
     image: ${SCHEDULER_IMAGE:-ghcr.io/melgarafael/deskcomm-scheduler:stable}
-    # pull_policy removido — ver o comentário equivalente no serviço `app`.
+    # Invariante 5 — ver o comentário equivalente no serviço `app`.
+    pull_policy: ${SCHEDULER_PULL_POLICY:-always}
     build:
       context: .
       dockerfile: Dockerfile.scheduler

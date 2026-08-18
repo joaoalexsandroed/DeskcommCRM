@@ -8,6 +8,8 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.4.3] — 2026-08-18
+
 ### Adicionado
 
 - **Kanban filtra por campo customizado do pipeline.** A v1.4.2 tornou os campos customizados

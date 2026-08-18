@@ -8,6 +8,26 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.4.2] — 2026-08-18
+
+### Adicionado
+
+- **Campos customizados do pipeline agora são editáveis e visíveis.** O schema declarativo
+  (`Configurações › Pipelines › Custom fields`) já existia, mas não havia onde preencher o
+  valor nem onde ele aparecia — `CustomFieldsEditor` existia como scaffold nunca ligado a
+  nenhuma tela. Agora aparece no dossiê do lead (seção "Campos do funil") e, quando
+  preenchido, no hover do card do Kanban (junto das tags — o card tem orçamento de layout
+  fixo e não cresce com dado novo).
+
+### Corrigido
+
+- **`pull_policy` removido pela v1.4.1 quebrava a atualização automática de quem instala
+  sem Swarm.** O fix do incidente anterior tirou a chave de app/worker/scheduler pra
+  resolver o erro do `docker stack deploy` na variante ORION — mas isso também tirava a
+  proteção da invariante 5 (`docs/doctrine/packaging.md`) para instalações com `docker
+  compose up -d` puro. A chave volta a existir no compose; quem roda Swarm agora deploya
+  uma cópia sem ela (`write_stack_composefile`, mesmo padrão já usado para o `.env`).
+
 ## [1.4.1] — 2026-08-18
 
 ### Corrigido

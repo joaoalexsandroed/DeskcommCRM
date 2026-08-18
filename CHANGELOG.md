@@ -8,6 +8,25 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [1.4.1] — 2026-08-18
+
+### Corrigido
+
+- **`docker-compose.prod.yml` quebrava `docker stack deploy` na variante ORION (Swarm +
+  Traefik já existente)** — a fusão com o repositório oficial que trouxe a v1.4.0
+  reintroduziu/trouxe três chaves incompatíveis com Swarm: `image:` duplicada no serviço
+  `worker`, `mem_limit:` (novo, sem equivalente Swarm — faz o `docker stack deploy` abortar
+  em silêncio, só com o aviso genérico de "unsupported options"), e `pull_policy:`
+  reintroduzido em app/worker/scheduler (já removido de propósito na v1.3.1 pelo mesmo
+  motivo). `mem_limit` foi convertido pra `deploy.resources.limits.memory` (equivalente
+  nativo do Swarm); as outras duas, removidas. Quem atualiza numa VPS Swarm+Traefik a partir
+  da v1.4.0 estava travado sem conseguir avançar nem voltar sozinho pela tela.
+
+### ⚠️ Requer atenção
+
+Sem mudança de banco nesta versão — é só a correção do compose acima. Quem já aplicou o
+baseline da v1.4.0 não precisa refazer nada.
+
 ## [1.4.0] — 2026-08-18
 
 Segunda integração com o repositório oficial (`melgarafael/DeskcommCRM`): 453 commits que

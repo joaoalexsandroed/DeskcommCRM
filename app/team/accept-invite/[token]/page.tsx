@@ -66,18 +66,25 @@ export default async function AcceptInvitePage({ params }: PageProps) {
           Para aceitar o convite como <strong>{payload.role}</strong>, entre ou crie uma conta com
           o email <strong>{payload.email}</strong>.
         </p>
-        <div className="mt-4 flex flex-col gap-2">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <Link
             href={`/login?next=${next}`}
-            className="inline-block rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground"
+            className="inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
           >
-            Já tenho conta — Entrar
+            Fazer login
           </Link>
+          {/*
+            O caminho que faltava. Quem é convidado e ainda NÃO tem conta só
+            tinha "Fazer login" — então criava conta pelo caminho comum, e o
+            provisionamento, sem achar vínculo, abria uma empresa e o tornava
+            admin dela. O token viaja no link para que a conta nova já nasça
+            amarrada a este convite.
+          */}
           <Link
-            href={`/signup?next=${next}`}
-            className="inline-block rounded-md border px-4 py-2 text-center text-sm font-medium hover:bg-accent"
+            href={`/signup?invite=${encodeURIComponent(token)}`}
+            className="text-sm underline underline-offset-4"
           >
-            Ainda não tenho conta — Criar conta
+            Ainda não tenho conta
           </Link>
         </div>
       </Shell>

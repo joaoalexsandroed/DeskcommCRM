@@ -52,7 +52,7 @@ const GOOGLE_ENDPOINT = 'https://generativelanguage.googleapis.com';
  * flexibilidade de `baseUrl` custom do upstream NÃO foi trazida nesta
  * integração — ver task de reconciliação.
  */
-const OPENROUTER_ENDPOINT = 'https://openrouter.ai';
+export const OPENROUTER_ENDPOINT = 'https://openrouter.ai';
 
 /**
  * Providers reais do lançamento. Sonnet (Anthropic) é o default RECOMENDADO —

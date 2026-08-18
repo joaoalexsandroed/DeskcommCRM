@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useT } from "@/hooks/i18n/useT";
 import { usePathname } from "next/navigation";
 import { useTransition } from "react";
 import { ArrowRight, CaretDoubleLeft, CaretDoubleRight, Gear } from "@/lib/ui/icons";
@@ -8,7 +9,7 @@ import { toggleSidebar } from "@/app/actions/shell/toggleSidebar";
 import { useAuth } from "@/hooks/auth/AuthProvider";
 import { ConnectionHealthDot } from "@/components/connections/ConnectionHealthDot";
 import { VersionFooter } from "@/components/shell/VersionFooter";
-import { branding } from "@/lib/branding";
+import { useMarcaDaInstalacao } from "@/lib/branding/contexto";
 import { GRUPO_NO_RODAPE, NAV_GROUPS, sidebarGroups } from "@/lib/navigation/registry";
 
 /**
@@ -20,6 +21,9 @@ import { GRUPO_NO_RODAPE, NAV_GROUPS, sidebarGroups } from "@/lib/navigation/reg
  * Configurações e das abas de IA, que mantinham suas próprias listas.
  */
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
+  // A barra lateral aparece em TODA tela — traduzi-la aqui é o que faz a
+  // escolha de idioma virar algo visível no primeiro clique.
+  const t = useT();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
   const { user, activeOrg } = useAuth();
@@ -29,7 +33,36 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const grupos = todos.filter((g) => g.group.id !== GRUPO_NO_RODAPE);
   const rodape = NAV_GROUPS.find((g) => g.id === GRUPO_NO_RODAPE)?.hub;
 
-  const brand = branding();
+  const brand = useMarcaDaInstalacao();
+  /**
+   * O CONSUMIDOR do nome por organização.
+   *
+   * Sem ele, `settings.branding.app_name` seria campo decorativo: medido, o nome
+   * da org não aparece em lugar nenhum da casca para o cliente típico de um
+   * revendedor — o único leitor é o `TenantSwitcher`, e ele devolve `null` com
+   * uma organização só.
+   *
+   * A marca da INSTALAÇÃO continua embaixo: a organização que não definiu nome
+   * vê exatamente o que via antes. O que mudou é POR ONDE ela chega — era
+   * `branding()`, que no navegador lê `window.__PUBLIC_ENV__` e no servidor lê
+   * `process.env`, e essas duas fontes passaram a divergir quando o layout raiz
+   * começou a injetar a marca do BANCO. Divergência entre SSR e cliente aqui não
+   * é detalhe: com logo no banco e `APP_LOGO_URL` vazio, o servidor desenhava o
+   * `<span>` de baixo e o cliente desenhava o `<img>` — React #418 em toda tela.
+   * Hoje a marca vem por PROP do servidor (`useMarcaDaInstalacao`), pela mesma
+   * rota de `activeOrg`, e os dois lados leem o mesmo objeto por construção.
+   */
+  const nome = activeOrg?.marca?.nome ?? brand.name;
+  /**
+   * O mesmo desenho para o LOGO — e é este par de linhas que fecha o caminho do
+   * `logo_url` gravado até a tela.
+   *
+   * `||` e não `??`: vazio é AUSÊNCIA de logo, não "logo em branco". É a regra
+   * que `resolveBranding` e `primeiroDefinido` já aplicam nas camadas de baixo, e
+   * com `??` um `""` vindo de cima apagaria o logo do revendedor em vez de
+   * descer para ele — que é o contrário do que a precedência por campo promete.
+   */
+  const logo = activeOrg?.marca?.logoUrl || brand.logoUrl;
 
   return (
     <aside
@@ -39,26 +72,30 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       )}
     >
       <div className={cn("flex items-center border-b px-4 h-14", collapsed ? "justify-center" : "justify-start")}>
-        {brand.logoUrl && !collapsed ? (
-          // <img> em vez de next/image de propósito: a URL vem do .env de quem hospeda,
-          // e next/image exige allowlist de domínios fechada em build — a imagem
-          // pré-buildada rejeitaria o domínio do self-hoster. Altura fixa e largura
-          // livre porque a arte enviada tem proporção desconhecida; forçar as duas
-          // distorceria o logo de quem configurou.
+        {logo && !collapsed ? (
+          // <img> em vez de next/image de propósito: a URL vem de quem hospeda
+          // (banco ou .env), e next/image exige allowlist de domínios fechada em
+          // build — a imagem pré-buildada rejeitaria o domínio do self-hoster.
+          // Altura fixa e largura livre porque a arte enviada tem proporção
+          // desconhecida; forçar as duas distorceria o logo de quem configurou.
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={brand.logoUrl}
-            alt={brand.name}
+            src={logo}
+            alt={nome}
             className="h-7 w-auto max-w-[10rem] object-contain"
           />
         ) : (
           <span className={cn("font-semibold tracking-tight", collapsed && "sr-only")}>
-            {brand.name}
+            {nome}
           </span>
         )}
         {collapsed && (
           <span aria-hidden className="text-lg font-bold text-primary">
-            {brand.initial}
+            {/* Spread e não `[0]`: nome começando com emoji ou acento composto
+                quebraria no meio do code point. Mesma regra de `resolveBranding`
+                — a inicial precisa acompanhar o nome que a barra mostra, senão
+                recolher o menu troca a marca. */}
+            {[...nome][0]?.toUpperCase() ?? brand.initial}
           </span>
         )}
       </div>
@@ -76,10 +113,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   id={tituloId}
                   className="px-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60"
                 >
-                  {group.label}
+                  {t(group.label)}
                 </h2>
               )}
-              <ul aria-labelledby={collapsed ? undefined : tituloId} aria-label={collapsed ? group.label : undefined} className="space-y-1">
+              <ul aria-labelledby={collapsed ? undefined : tituloId} aria-label={collapsed ? t(group.label) : undefined} className="space-y-1">
                 {items.map((item) => {
                   const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
                   const Icon = item.icon;
@@ -87,7 +124,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     <li key={item.href}>
                       <Link
                         href={item.href}
-                        title={collapsed ? item.label : undefined}
+                        title={collapsed ? t(item.label) : undefined}
                         aria-current={isActive ? "page" : undefined}
                         className={cn(
                           "relative flex items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",
@@ -98,7 +135,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                         )}
                       >
                         <Icon size={18} weight={isActive ? "fill" : "regular"} aria-hidden />
-                        {!collapsed && <span className="truncate">{item.label}</span>}
+                        {!collapsed && <span className="truncate">{t(item.label)}</span>}
                         {item.healthDot && (
                           <ConnectionHealthDot
                             className={cn(collapsed ? "absolute right-1.5 top-1.5" : "ml-auto")}
@@ -112,7 +149,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   <li>
                     <Link
                       href={group.hub.href}
-                      title={collapsed ? group.hub.label : undefined}
+                      title={collapsed ? t(group.hub.label) : undefined}
                       aria-current={pathname === group.hub.href ? "page" : undefined}
                       className={cn(
                         "flex items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",
@@ -123,7 +160,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                       )}
                     >
                       <ArrowRight size={18} aria-hidden />
-                      {!collapsed && <span className="truncate">{group.hub.label}</span>}
+                      {!collapsed && <span className="truncate">{t(group.hub.label)}</span>}
                     </Link>
                   </li>
                 )}
@@ -136,7 +173,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         {rodape && (
           <Link
             href={rodape.href}
-            title={collapsed ? rodape.label : undefined}
+            title={collapsed ? t(rodape.label) : undefined}
             aria-current={pathname.startsWith(rodape.href) ? "page" : undefined}
             className={cn(
               "mb-1 flex items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",

@@ -34,7 +34,12 @@ interface Mapa {
 
 const arquivos = fs
   .readdirSync(DIR)
-  .filter((f) => f.endsWith(".architecture.json"))
+  // TODO *.json, não só `.architecture.json`. O filtro estreito deixava de fora
+  // exatamente `agent-turn.workflow.json` — o mapa mais importante do produto e o
+  // único que o archify renderiza. Foi por essa fresta que ele passou a afirmar
+  // "cadeia de 7 gates" (eram 10) e "1 chamada de modelo" (eram 2) sem nada
+  // reprovar: prosa não tem catraca, e o gate estrutural nem olhava o arquivo.
+  .filter((f) => f.endsWith(".json"))
   .sort();
 
 /**
@@ -99,6 +104,44 @@ describe("mapas de arquitetura — coerência interna", () => {
     expect(orfaos, `${nome} tem peça sem nenhuma ligação`).toEqual([]);
   });
 
+  it("a marca própria está no mapa, e nenhuma peça dela é ilha", () => {
+    // O caso concreto do DoD 13 para o épico de marca própria. O caso genérico
+    // acima cobra ≥1 aresta; o invariante 1 do Sistema Vivo cobra ≥2 (uma de
+    // entrada e uma de saída), e essa parte nenhum gate cobrava. Sem nomear as
+    // peças, "algum mapa existe" continuaria verde com a marca inteira ausente.
+    const m = JSON.parse(
+      fs.readFileSync(path.join(DIR, "marca-propria.architecture.json"), "utf8"),
+    ) as Mapa;
+    const grau = (id: string) =>
+      (m.edges ?? []).filter((e) => e.from === id || e.to === id).length;
+    for (const peca of [
+      "platformbranding",
+      "orgbranding",
+      "resolver",
+      "saida",
+      "layout",
+      "iconroute",
+      "marcaemails",
+      "pdf",
+    ]) {
+      expect(
+        grau(peca),
+        `${peca} com menos de 2 arestas — é ilha pelo invariante 1`,
+      ).toBeGreaterThanOrEqual(2);
+    }
+    // `pdf` está na lista de propósito: ele é a peça DESLIGADA da marca, e a
+    // tentação de "desilhá-la" ligando-a a `saida` é exatamente a decisão que o
+    // épico recusou. As duas arestas que ele tem são para o CONTROLADOR e para o
+    // titular — nenhuma delas vem do resolvedor de marca.
+    const doPdf = (m.edges ?? []).filter((e) => e.from === "pdf" || e.to === "pdf");
+    expect(
+      doPdf.filter((e) => e.from === "saida" || e.to === "saida"),
+      "alguém ligou o PDF de LGPD ao resolvedor de marca. Isso nomearia o revendedor " +
+        "(que é OPERADOR) como controlador num documento que responde a direito legal do " +
+        "titular. A não-ligação é a decisão — está no card vermelho do próprio mapa.\n",
+    ).toEqual([]);
+  });
+
   it("o índice de atrito está no mapa, e com mais de duas arestas", () => {
     // O caso concreto do DoD 13 para o trabalho desta branch. Genérico demais
     // não guardaria nada: "algum mapa existe" é verdade desde sempre.
@@ -109,6 +152,76 @@ describe("mapas de arquitetura — coerência interna", () => {
       (m.edges ?? []).filter((e) => e.from === id || e.to === id).length;
     for (const peca of ["demandas", "fnatrito", "libradar", "toolradar", "inbox"]) {
       expect(grau(peca), `${peca} com menos de 2 arestas — é ilha pelo invariante 1`).toBeGreaterThanOrEqual(2);
+    }
+  });
+});
+
+/**
+ * TODO KIND DE TURNO TEM PEÇA NO MAPA DO TURNO.
+ *
+ * É o gate que impede o mapa de envelhecer de novo — e ele existe porque a
+ * alternativa não funciona: as duas frases erradas que este épico consertou
+ * ("cadeia de 7 gates" com 10 na cadeia, "1 chamada de modelo" com 2) moravam em
+ * `sublabel`, e prosa não tem catraca. Guardar a string seria guardar TEXTO.
+ *
+ * O que se guarda é ESTRUTURAL: um kind de turno novo — algo que o worker registra
+ * como handler e a fila obriga a ter contato — é uma peça nova do runtime da IA, e
+ * peça nova entra no mapa com pelo menos duas arestas, por doutrina. Foi
+ * exatamente isso que não aconteceu quando `operator_turn` nasceu: o épico dos três
+ * papéis criou um segundo turno de modelo e o mapa seguiu descrevendo um.
+ *
+ * A allowlist existe para o kind que legitimamente não é peça do mapa do turno, e
+ * exige razão escrita.
+ */
+describe("o mapa do turno conhece todos os turnos", () => {
+  /** Kinds da fila que NÃO são turno de agente, com o motivo. */
+  const NAO_SAO_TURNO: Record<string, string> = {
+    watchdog: "vigia sessões e não roda modelo — não é turno de agente",
+    flywheel: "ciclo de auto-aprimoramento, tem mapa próprio (flywheel)",
+  };
+
+  it("cada kind de turno aparece como peça ou tag do mapa do turno", () => {
+    const fila = fs.readFileSync(
+      path.join(process.cwd(), "lib/agent-engine/queue/queue.ts"),
+      "utf8",
+    );
+    const m = /export type JobKind =([^;]+);/.exec(fila);
+    // Controle positivo: sem o union, a varredura compararia com lista vazia.
+    expect(m, "não achei o union JobKind — ENSINE ESTE TESTE").toBeTruthy();
+    const kinds = [...(m?.[1] ?? "").matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!);
+    expect(kinds.length).toBeGreaterThan(3);
+
+    // Olha os NÓS, não o arquivo inteiro. A primeira versão deste caso fazia
+    // `include` no texto do JSON e passava com o nó do Operador APAGADO — porque o
+    // nome do kind também aparece na prosa de um card. Um gate que aceita menção em
+    // vez de peça mede o proxy: descoberto por sabotagem, com a contagem prevista
+    // que não veio.
+    const mapa = JSON.parse(
+      fs.readFileSync(
+        path.join(process.cwd(), "docs/architecture/agent-turn.workflow.json"),
+        "utf8",
+      ),
+    ) as { nodes: Array<{ id: string; tag?: string; sublabel?: string; label?: string }> };
+
+    const nosComoTexto = mapa.nodes
+      .map((n) => `${n.id} ${n.tag ?? ""} ${n.label ?? ""} ${n.sublabel ?? ""}`)
+      .join(" | ");
+
+    const ausentes = kinds
+      .filter((k) => NAO_SAO_TURNO[k] === undefined)
+      .filter((k) => !nosComoTexto.includes(k));
+
+    expect(
+      ausentes,
+      "kind de turno que o mapa do turno não conhece. Peça nova do runtime entra no " +
+        "mapa com pelo menos duas arestas (doutrina do sistema vivo) — ou entra em " +
+        "NAO_SAO_TURNO com o motivo escrito.\n",
+    ).toEqual([]);
+  });
+
+  it("toda exceção da allowlist diz por quê", () => {
+    for (const [kind, porque] of Object.entries(NAO_SAO_TURNO)) {
+      expect(porque.length, `${kind} sem motivo escrito`).toBeGreaterThan(25);
     }
   });
 });

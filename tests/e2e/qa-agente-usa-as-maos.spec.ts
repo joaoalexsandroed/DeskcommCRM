@@ -25,6 +25,7 @@ import * as path from "node:path";
 
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
 
+import { afirmarAdminDeTenantPuro } from "./utils/precondicao";
 import { generateTotp, msUntilNextTotpWindow } from "./utils/totp";
 import { catalogoEntregueAoOperador } from "@/lib/agent-engine/agent/entrega-de-capacidade";
 
@@ -47,6 +48,19 @@ function loadCreds(): Creds {
 
 const creds = loadCreds();
 const ts = Date.now();
+
+// ── Precondição de identidade ────────────────────────────────────────────────
+// Esta spec dirige o agente como um ADMIN DE TENANT, o usuário compartilhado que
+// `seed-e2e-system-update.ts` promovia sem revogar.
+//
+// ⚠️ Medido: com rank `admin` (5, o teto), os gates
+// `!user.is_platform_admin && ROLE_RANK[...] < X` de `app/app/**` já passam pelo
+// rank — a promoção não muda o desfecho deste arquivo hoje. A precondição guarda
+// a IDENTIDADE, para que a próxima asserção não pegue carona no escape. Ver
+// `utils/precondicao.ts` para a medição completa.
+test.beforeAll(async () => {
+  await afirmarAdminDeTenantPuro(creds.users.admin!.email);
+});
 
 /** As capacidades da W4 que cabem no teto de 20 por agente, mais o essencial de contexto. */
 const CAPACIDADES = [
@@ -442,8 +456,20 @@ test.describe("QA — o agente usa as mãos que a W4 entregou?", () => {
         // Turno que NÃO rodou também é gravado. Um cenário que some do diretório é
         // indistinguível de um que nunca foi tentado — e taxa medida sobre denominador
         // que encolheu em silêncio é o defeito que esta medição existe para não cometer.
+        //
+        // Mas em ARQUIVO PRÓPRIO (`__falhou`), e isto é o conserto de um estrago
+        // medido em 2026-08-08: rodando a suíte nesta máquina, sem chave de IA, os
+        // 10 cenários voltaram HTTP 400 e o carimbo `rodou: false` foi gravado por
+        // cima dos turnos REAIS versionados aqui — que são a fixture de
+        // `tests/unit/projecao-conversador.test.ts`. Resultado: a medição histórica
+        // do vazamento de 30% foi destruída e 3 testes de unidade ficaram vermelhos
+        // (o controle positivo deles pegou, como foi desenhado para pegar).
+        //
+        // Sobrescrever uma medição bem-sucedida com um registro de falha é, ele
+        // mesmo, um erro de medição: o dado histórico é o artefato mais valioso dos
+        // dois. A falha continua visível, ao lado, sem apagar nada.
         fs.writeFileSync(
-          dump,
+          dump.replace(/\.json$/, "__falhou.json"),
           JSON.stringify(
             {
               prompt_kind: PROMPT_KIND,

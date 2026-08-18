@@ -10,8 +10,22 @@
  *
  * O alcance real hoje, medido: `resolveLanguageModel()` é chamado por
  * `ai-sentiment-worker` (classificação de sentimento) e `ai-response-worker`
- * (bot de resposta). NENHUM dos dois passa `tools` ao SDK — o alcance da
- * variável de AMBIENTE `OPENROUTER_API_KEY` fica restrito a esses dois.
+ * (bot de resposta). NENHUM dos dois passa `tools` ao SDK. O agente do CRM, que
+ * opera por ferramentas, roda por outro caminho — `lib/agent-engine/edge/llm/
+ * providers.ts` (credencial BYOK por organização) e `buildModel()` em
+ * `lib/ai/runtime/agent.ts`.
+ *
+ * ⚠️ Esta última frase dizia "e nenhum deles conhece a OpenRouter", e envelheceu
+ * em duas etapas — exatamente o apodrecimento que o parágrafo acima previa:
+ *   1. `providers.ts` passou a registrar `openrouter` (a virada que o penúltimo
+ *      teste deste arquivo já reconhece e vigia);
+ *   2. `buildModel()` ficou para trás mais um tempo, com três casos, e o ensaio
+ *      da aba "Teste" morria em `unsupported_provider` para um agente que o
+ *      worker atendia normalmente. Agora conhece os quatro, e quem vigia isso é
+ *      `tests/unit/provedores-x-registry.test.ts`, que chama a função para cada
+ *      id da lista canônica.
+ * A chave também não chegava ao worker: `OPENROUTER_API_KEY` faltava no schema
+ * de `lib/agent-engine/env.ts` e o Zod a removia no boot.
  *
  * Decisão de produto (branch `vps-orion`, diverge do upstream): o agente do
  * CRM, que opera por ferramentas, aceita OpenRouter como provider — via

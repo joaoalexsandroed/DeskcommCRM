@@ -41,6 +41,7 @@ import { WahaChannelAdapter } from '../edge/channel/waha-adapter';
 // egress de canal — o envio em si vai pelo adapter (ChannelAdapter). Ver F2-25.
 import { applySendOutcome } from '../edge/crm/send-message';
 import {
+  LlmBudgetExceededError,
   runModelCall,
   tool,
   type LlmEdgeConfig,
@@ -48,6 +49,7 @@ import {
   type ToolSet,
 } from '../edge/llm/run-model-call';
 import type { ProviderRegistry } from '../edge/llm/providers';
+import { HANDOFF_REASON_ORCAMENTO } from '../edge/llm/orcamento';
 import { MIRROR_WARN_ONLY, mirrorLeadStageToCrm } from '../edge/crm/move-lead-stage';
 import { insertInboxItem } from '../db/repository';
 import { buildNativeMediaParts } from './media-parts';
@@ -72,7 +74,7 @@ import {
   type StageClassifierKnobs,
 } from './stage-classifier';
 import { loadPlaybook } from './playbook';
-import { DECLARACAO_INSTRUCTION, declaracaoDoTurnoSchema, type DeclaracaoDoTurno } from './declaracao';
+import { DECLARACAO_INSTRUCTION, declaracaoDoTurnoSchema, promessasEmAberto, type DeclaracaoDoTurno } from './declaracao';
 import { projetarContexto, projetarRetornoDeTool, turnoProjeta, type ContextoProjetado } from './projecao';
 import { capacidadesEntreguesAoOperador, catalogoEntregueAoOperador } from './entrega-de-capacidade';
 import { composeSystemPrompt, loadOrgMemory, renderOrgMemory } from './org-memory';
@@ -119,6 +121,7 @@ import {
   type JailbreakClassifierKnobs,
   type JailbreakLevel,
 } from '../guardrails/jailbreak/classifier';
+import { camadaLigada, lerCamadasDaOrg } from '../guardrails/camadas-da-org';
 
 /**
  * Superfície ESTÁTICA das tools do agente (description + inputSchema) — parte do
@@ -362,6 +365,137 @@ export const CHECKPOINT_INSTRUCTION =
   ' Sem texto fora do JSON.';
 
 /**
+ * Reexportado do módulo puro, onde ele PRECISA morar: o caminho legado
+ * (`workers/ai-response-worker.ts`) grava a mesma razão e não pode importar este
+ * arquivo. Fica visível aqui porque é daqui que o engine a grava.
+ */
+export { HANDOFF_REASON_ORCAMENTO };
+
+/**
+ * Primeira linha do resumo que vai ao humano quando o orçamento interrompe o
+ * turno. É TEXTO FIXO, e tem de ser: o desvio existe porque não há orçamento
+ * para chamar o modelo, então gerar este resumo por LLM seria gastar exatamente
+ * o que acabou de ser recusado. O contexto útil vem logo abaixo, do checkpoint
+ * durável (`buildHandoffSummary`), que também não custa token nenhum.
+ */
+export const RESUMO_DO_HANDOFF_POR_ORCAMENTO =
+  'A IA parou de responder porque o teto de gasto mensal com IA desta organização foi ' +
+  'atingido — o lead NÃO pediu atendimento humano. Assuma a conversa; para devolvê-la ao ' +
+  'atendimento automático, ajuste o teto em Uso de IA › Orçamento e use "Devolver ao ' +
+  'automático" no cabeçalho da conversa.';
+
+/** Título do item da Central que este handoff abre — rótulo visível, logo constante. */
+export const TITULO_DO_HANDOFF_POR_ORCAMENTO = 'Teto de gasto com IA atingido — assumir a conversa';
+
+/**
+ * ORÇAMENTO ESGOTADO NÃO PODE VIRAR SILÊNCIO PARA O LEAD.
+ *
+ * `aplicarOrcamento` recusa a chamada ANTES de sair byte para o provedor
+ * (`../edge/llm/run-model-call.ts`), e a exceção subia direto para o `catch` do
+ * worker. Do lado de fora, no WhatsApp, isso é uma pessoa que perguntou alguma
+ * coisa e não recebeu resposta nenhuma — nem da IA, nem de gente. A proteção que
+ * existe para salvar dinheiro quebrava o invariante 4 da doutrina do Sistema
+ * Vivo: nenhuma demanda sem próximo passo.
+ *
+ * A resposta certa já existe no repositório e é feita exatamente para isto:
+ * `performHumanHandoff` transiciona a conversa `ai_handling`→`pending` (fila
+ * humana), silencia o bot, cancela os follow-ups agendados do lead e abre um
+ * `agent_inbox_items` kind `handoff` — TUDO em banco, SEM GASTAR UM TOKEN, o que
+ * aqui não é detalhe: o motivo do desvio é justamente não haver orçamento. Por
+ * isso o resumo é texto fixo mais o checkpoint durável, nunca um resumo gerado.
+ *
+ * RELANÇA sempre. Quem decide o destino do job é a fila
+ * (`workers/agent-worker/main.ts` manda erro terminal para `cancelJob`, não para
+ * `failJob`). Engolir aqui trocaria uma falha visível por uma silenciosa, e pior:
+ * o turno seguiria para o fechamento como se o modelo tivesse respondido.
+ *
+ * Se o PRÓPRIO handoff falhar (banco fora), a exceção DELE é que sobe — e é o
+ * comportamento certo: ela não é terminal, então o job re-tenta e o handoff volta
+ * a ser tentado. Preservar o erro de orçamento aqui faria o job ser cancelado com
+ * o lead ainda no vácuo, que é o defeito que esta função existe para fechar.
+ *
+ * É função de módulo, e não closure do turno, para poder ser exercitada sozinha:
+ * o caminho de erro de um turno de agente é caro demais para se provar só de
+ * ponta a ponta, e o que precisa ser provado aqui é pequeno e exato.
+ *
+ * ═══ POR QUE ELA ENVOLVE O TURNO INTEIRO, E NÃO AS CHAMADAS DE MODELO ═══
+ *
+ * A primeira versão envolvia as DUAS chamadas diretas de `runModelCall` do
+ * turno. Estava errada, e do jeito mais silencioso possível: o turno faz outras
+ * chamadas de modelo ANTES delas, por funções auxiliares —
+ * `classifyStage` (`stage-classifier.ts`, purpose `stage_classifier`, roda em
+ * TODO turno porque `main.ts` monta `stageClassifier: {…}` como literal de
+ * objeto, sempre definido) e `maybeCompact`/flush (`compaction.ts`, purposes
+ * `compaction`/`flush`). Nenhum desses purposes está em `PURPOSES_ISENTOS`, e
+ * nenhum tinha try/catch: com o teto estourado, o erro subia do classificador
+ * ANTES de a escolta existir, o handoff NUNCA rodava, e o worker — que lê
+ * `terminal` e chama `cancelJob` — descartava o job. Lead no vácuo, sem retry,
+ * sem alerta. A escolta cobria o caso raro e faltava no dominante.
+ *
+ * Envolver o turno inteiro é o único desenho que não envelhece: não há lista de
+ * auxiliares a manter, e o auxiliar que alguém acrescentar amanhã já nasce
+ * coberto. `resumoDoCheckpoint` é uma FUNÇÃO resolvida dentro do catch (e não um
+ * valor pronto), porque no caminho novo a escolta abre antes de o checkpoint ter
+ * sido lido — e ler o checkpoint no caminho feliz seria uma query a mais por
+ * turno para um texto que quase nunca é usado.
+ */
+export async function comHandoffSeOrcamentoAcabar<T>(
+  ctx: {
+    pool: pg.Pool;
+    tenantId: string;
+    leadId: string;
+    conversationId: string;
+    /**
+     * Resolvido SÓ no caminho de erro: `buildHandoffSummary(latestCheckpoint(...))`
+     * — do checkpoint durável, zero LLM.
+     */
+    resumoDoCheckpoint: () => Promise<string>;
+    log: Logger;
+  },
+  chamada: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await chamada();
+  } catch (err) {
+    if (!(err instanceof LlmBudgetExceededError)) throw err;
+    const resumo = await ctx.resumoDoCheckpoint();
+    await performHumanHandoff(
+      ctx.pool,
+      { tenantId: ctx.tenantId, leadId: ctx.leadId, conversationId: ctx.conversationId },
+      {
+        reason: HANDOFF_REASON_ORCAMENTO,
+        conversationSummary: `${RESUMO_DO_HANDOFF_POR_ORCAMENTO}\n\n${resumo}`,
+        inboxTitle: TITULO_DO_HANDOFF_POR_ORCAMENTO,
+        log: ctx.log,
+      },
+    );
+    ctx.log.warn('turno interrompido pelo teto de gasto — conversa devolvida à fila humana');
+    throw err;
+  }
+}
+
+/**
+ * O resumo que vai ao humano quando o orçamento interrompe o turno, lido do
+ * checkpoint durável. Falhar aqui NÃO pode impedir o handoff: sem resumo o
+ * humano assume com menos contexto; sem handoff ele não assume nada.
+ */
+async function resumoDoCheckpointDuravel(
+  pool: pg.Pool,
+  tenantId: string,
+  leadId: string,
+  log: Logger,
+): Promise<string> {
+  try {
+    return buildHandoffSummary(await latestCheckpoint(pool, tenantId, leadId));
+  } catch (err) {
+    log.warn('resumo do checkpoint não pôde ser lido — o handoff segue sem ele', {
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 120),
+    });
+    return buildHandoffSummary(null);
+  }
+}
+
+/**
  * Bloco de sistema RESIDENTE das tools de caso (spec 15 §5.2) — entra no prefixo
  * cacheável junto do índice de skills quando `casesEnabled`, pra não sumir em
  * conversa longa (ao contrário do índice de skills, este bloco não some).
@@ -489,6 +623,68 @@ export async function latestCheckpoint(
     [tenantId, leadId],
   );
   return rows[0] ?? null;
+}
+
+/**
+ * O checkpoint DO TURNO indicado — não "o mais recente do lead".
+ *
+ * `latestCheckpoint` é a pergunta certa para ABRIR um turno e a errada para
+ * PROCESSAR um: entre o fim do turno N e o claim do job do Operador N cabe o turno
+ * N+1 inteiro. A fila ordena por `(priority, run_after)`, o job do Operador nasce
+ * com `run_after = now()` e o inbound com `now() + INBOUND_DEBOUNCE_MS` (8s) —
+ * então uma mensagem que chega enquanto o turno corrente fecha é servida ANTES, e o
+ * Operador N acordaria lendo a declaração N+1. O efeito é a mesma promessa
+ * executada duas vezes e um aviso aberto duas vezes para uma promessa só.
+ *
+ * A chave sempre viajou no payload (`origin_job_id`) e era usada só como campo de
+ * log. Sem índice novo: `idx_lead_checkpoints_latest (organization_id, contact_id,
+ * seq desc)` já restringe a varredura àquele lead, e o `job_id` filtra em cima.
+ */
+export async function checkpointDoJob(
+  db: Queryable,
+  tenantId: string,
+  leadId: string,
+  jobId: string,
+): Promise<LeadCheckpointRow | null> {
+  const { rows } = await db.query<LeadCheckpointRow>(
+    `select * from lead_checkpoints
+     where organization_id = $1 and contact_id = $2 and job_id = $3
+     order by seq desc
+     limit 1`,
+    [tenantId, leadId, jobId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * A decisão de ENFILEIRAR o Operador — irmã de `decidirSeRoda`, que decide se ele
+ * RODA.
+ *
+ * A segunda era função pura desde o primeiro dia; a primeira ficou implícita em
+ * "sempre". A decisão (e) da spec declarou o custo em dinheiro (+1 chamada com o
+ * papel ligado) e ninguém declarou o custo em CAPACIDADE DE FILA, pago mesmo com o
+ * papel desligado — o default de toda instalação.
+ *
+ * Por turno, para escrever uma linha de log num contêiner que o dono do negócio
+ * nunca abre: um job, um slot de `QUEUE_MAX_CONCURRENCY` e a única vaga daquele
+ * lead no lote do claim (`distinct on (coalesce(contact_id, id))`). Sob rajada, é o
+ * turno de CRM sendo servido antes da próxima mensagem do cliente.
+ *
+ * O que se perde: o registro "papel_desligado" do handler. Aceitável — era um
+ * `log.info` de worker, que este arquivo classifica como não-superfície, e a linha
+ * do chamador o repõe no mesmo nível com custo zero de fila.
+ *
+ * O que isto NÃO conserta, e um leitor futuro vai supor que sim: com o papel
+ * desligado, promessa feita pelo Conversador continua sem registro na Central. Era
+ * assim antes e continua sendo.
+ */
+export function decidirSeEnfileiraOperador(input: {
+  temAgentePublicado: boolean;
+  papelLigado: boolean;
+}): { enfileira: boolean; porque: 'ligado' | 'sem_agente' | 'papel_desligado' } {
+  if (!input.temAgentePublicado) return { enfileira: false, porque: 'sem_agente' };
+  if (!input.papelLigado) return { enfileira: false, porque: 'papel_desligado' };
+  return { enfileira: true, porque: 'ligado' };
 }
 
 async function insertCheckpoint(
@@ -735,7 +931,52 @@ export async function avisarCapacidadesAusentes(
   }
 }
 
+/**
+ * O NÚCLEO DO TURNO, SEMPRE SOB A ESCOLTA DO ORÇAMENTO.
+ *
+ * Esta função é o único ponto do produto por onde os três kinds de turno de
+ * lead passam (`inbound_turn`, `followup_turn`, `case_reply_turn` — quatro call
+ * sites), e por isso é aqui que a escolta mora. Envolver o turno INTEIRO, e não
+ * as chamadas de modelo, é o que faz a proteção alcançar as chamadas indiretas
+ * (`classifyStage`, `maybeCompact`/flush) — que são justamente as PRIMEIRAS do
+ * turno, e portanto as que estouram primeiro quando o teto acabou. Ver o
+ * cabeçalho de `comHandoffSeOrcamentoAcabar` para o defeito medido.
+ *
+ * `executarTurnoDoAgente` NÃO é exportada de propósito: exportá-la criaria um
+ * caminho para o turno rodar desescoltado, e a guarda de artefato
+ * (`tests/unit/handoff-por-orcamento.test.ts`) conta exatamente um call site.
+ */
 export async function runAgentTurn(
+  deps: InboundTurnDeps,
+  job: JobRow,
+  pool: pg.Pool,
+  ctx: { workerId: string },
+  input: AgentTurnInput,
+): Promise<void> {
+  const leadIdDoJob = job.contact_id;
+  if (leadIdDoJob === null) {
+    throw new Error('job de turno sem contact_id — o CHECK da fila deveria impedir');
+  }
+  const logDaEscolta = withFields(deps.log, {
+    job_id: job.id,
+    tenant_id: job.organization_id,
+    lead_id: leadIdDoJob,
+  });
+  await comHandoffSeOrcamentoAcabar(
+    {
+      pool,
+      tenantId: job.organization_id,
+      leadId: leadIdDoJob,
+      conversationId: input.conversationId,
+      resumoDoCheckpoint: () =>
+        resumoDoCheckpointDuravel(pool, job.organization_id, leadIdDoJob, logDaEscolta),
+      log: logDaEscolta,
+    },
+    () => executarTurnoDoAgente(deps, job, pool, ctx, input),
+  );
+}
+
+async function executarTurnoDoAgente(
   deps: InboundTurnDeps,
   job: JobRow,
   pool: pg.Pool,
@@ -750,6 +991,19 @@ export async function runAgentTurn(
   const contextKnobs = { historyLimit: deps.knobs.historyLimit, maxTokens: deps.knobs.maxContextTokens };
   // Contexto do RUN em toda linha de log do turno (F2-16): job_id É o run id.
   const runLog = withFields(deps.log, { job_id: job.id, tenant_id: tenantId, lead_id: leadId });
+
+  // AS DUAS CAMADAS QUE CUSTAM DINHEIRO, resolvidas UMA vez por turno.
+  //
+  // Os knobs (`deps.knobs.jailbreak`, `deps.knobs.promiseSemantic`) nascem no boot
+  // do worker e valem para a instalação inteira; a linha em `org_guardrail_layers`
+  // é a preferência de QUEM PAGA a consulta. Sem linha, `camadaLigada` devolve o
+  // padrão do ambiente — aplicar a migration não muda o comportamento de quem já
+  // decidiu no `.env`.
+  //
+  // Lido aqui, e não em cada ponto de uso: os dois consumidores ficam a ~900
+  // linhas de distância um do outro, e duas queries para a mesma pergunta viram,
+  // com o tempo, duas respostas.
+  const camadas = await lerCamadasDaOrg(pool, tenantId);
 
   // F4-06 (acceptance 2): lead em handoff humano → NO-OP no INÍCIO do turno, antes de
   // qualquer chamada de modelo/CRM. O bot silenciou (bot_silenced_until='infinity', cache
@@ -1066,7 +1320,7 @@ export async function runAgentTurn(
   // ROW do job fechados dentro (regra dura nº 1) — resolvido pelo seam agnóstico. undefined =
   // camada off (gate no-op). CUSTO: uma chamada de modelo POR ENVIO quando ligada.
   const semanticClassifier =
-    deps.knobs.promiseSemantic?.enabled === true
+    camadaLigada(camadas.promessa_semantica, deps.knobs.promiseSemantic?.enabled === true)
       ? (candidate: string) =>
           classifyPromise(
             pool,
@@ -1965,14 +2219,16 @@ export async function runAgentTurn(
   // checado nele). NÃO veta o inbound — só FLAGRA o turno no trace; flag/level não são PII
   // (a mensagem/reason nunca vão a log). A correlação com promessa fora de tabela escala no fim.
   let jailbreakLevel: JailbreakLevel = 'none';
-  if (deps.knobs.jailbreak !== undefined) {
+  if (camadaLigada(camadas.jailbreak, deps.knobs.jailbreak !== undefined)) {
     const verdict = await classifyJailbreak(
       pool,
       deps.llmCfg,
       { tenantId, leadId, jobId: job.id },
       {
         message: skillSignal,
-        ...argsAux(deps.knobs.jailbreak.model),
+        // Knob ausente + organização ligando = roda com o modelo padrão dela,
+        // que é a convenção já usada pelo stageClassifier.
+        ...argsAux(deps.knobs.jailbreak?.model),
       },
       { registry: deps.registry, log: runLog },
     );
@@ -2046,6 +2302,11 @@ export async function runAgentTurn(
       : [{ role: 'user', content: [{ type: 'text', text: openingText }, ...nativeParts] }];
 
   // O modelo decide tools livremente dentro do teto de steps (knob AGENT_MAX_STEPS).
+  //
+  // Sem escolta LOCAL: quem cobre o teto de gasto é `runAgentTurn`, que envolve
+  // este corpo inteiro. Escoltar aqui deixaria de fora as chamadas de modelo dos
+  // auxiliares (`classifyStage`, `maybeCompact`), que rodam ANTES desta e por
+  // isso são as que estouram primeiro.
   const turn = await runModelCall(
     pool,
     deps.llmCfg,
@@ -2102,6 +2363,12 @@ export async function runAgentTurn(
       : turn.result.response.messages;
 
   // Fechamento imposto pelo runtime: 2ª chamada, mesma conversa, só o checkpoint.
+  //
+  // Também sob o handoff (o do turno inteiro, em `runAgentTurn`): o teto pode
+  // ser cruzado ENTRE as duas chamadas — a primeira é que gasta o grosso do
+  // turno. Aqui o lead já recebeu resposta, mas a conversa ficaria sem
+  // checkpoint e sem dono, e o próximo inbound cairia no mesmo bloqueio, agora
+  // sem nada tendo mudado no meio.
   const closing = await runModelCall(
     pool,
     deps.llmCfg,
@@ -2150,22 +2417,68 @@ export async function runAgentTurn(
   // Fire-and-forget: falha ao enfileirar NÃO derruba um turno que já respondeu
   // ao cliente. O `sourceEventId` é o job do Conversador, então o retry da fila
   // não gera um segundo Operador para o mesmo turno.
-  try {
-    const { deduped } = await enqueueJob(pool, tenantId, {
-      kind: 'operator_turn',
-      leadId,
-      sourceEventId: job.id,
-      payload: {
-        conversation_id: input.conversationId,
-        origin_job_id: job.id,
-        agent_id: agentConfig?.agentId ?? null,
-      },
-    });
-    runLog.info('turno do operador enfileirado', { deduped });
-  } catch (err) {
-    runLog.error('turno do operador NÃO foi enfileirado (o turno segue)', {
-      error: (err instanceof Error ? err.message : String(err)).slice(0, 120),
-    });
+  const disparo = decidirSeEnfileiraOperador({
+    temAgentePublicado: agentConfig !== null,
+    papelLigado: agentConfig?.operatorEnabled ?? false,
+  });
+  if (!disparo.enfileira) {
+    runLog.info('turno do operador não enfileirado', { porque: disparo.porque });
+  } else {
+    try {
+      const { deduped } = await enqueueJob(pool, tenantId, {
+        kind: 'operator_turn',
+        leadId,
+        sourceEventId: job.id,
+        payload: {
+          conversation_id: input.conversationId,
+          origin_job_id: job.id,
+          agent_id: agentConfig?.agentId ?? null,
+        },
+      });
+      runLog.info('turno do operador enfileirado', { deduped });
+    } catch (err) {
+      runLog.error('turno do operador NÃO foi enfileirado (o turno segue)', {
+        error: (err instanceof Error ? err.message : String(err)).slice(0, 120),
+      });
+      // O CATCH TINHA A DOUTRINA CERTA E A CONCLUSÃO ERRADA.
+      //
+      // "O aviso não pode derrubar o turno que já respondeu ao cliente" está certo.
+      // "Então basta um log" não: o enfileiramento é o ÚNICO mecanismo que garante o
+      // disparo do papel, e falhar aqui significa que a promessa que o Conversador
+      // acabou de fazer não terá dono e ninguém vai saber.
+      //
+      // É a mesma lição que este arquivo já aplicou no catch das capacidades MCP,
+      // onde o comentário diz que a versão anterior "dizia 'o humano vê o log'. Não
+      // vê." Lição aplicada numa ocorrência e não na irmã.
+      //
+      // Só quando HÁ promessa: sem ela o Operador teria decidido "nada a fazer", e
+      // item sem ação é ruído — ruído ensina a ignorar a Central.
+      const promessas = promessasEmAberto(content.declaracao ?? null);
+      if (promessas.length > 0) {
+        try {
+          await insertInboxItem(
+            pool,
+            tenantId,
+            {
+              kind: 'promise_unfulfilled',
+              severity: 'warn',
+              title: 'Um retorno prometido a um cliente ficou sem dono',
+              body:
+                'O assistente prometeu algo a esta pessoa nesta conversa e o passo que registra ' +
+                'o cumprimento não chegou a ser agendado. Abra a conversa, veja o que foi ' +
+                'combinado e cumpra você mesmo.',
+              refKind: 'conversation',
+              refId: input.conversationId,
+            },
+            'kind_e_ref',
+          );
+        } catch (erroDoAviso) {
+          runLog.error('aviso de promessa sem dono não foi gravado', {
+            error: (erroDoAviso instanceof Error ? erroDoAviso.message : String(erroDoAviso)).slice(0, 120),
+          });
+        }
+      }
+    }
   }
 
   const mudanca = diffCheckpoint(

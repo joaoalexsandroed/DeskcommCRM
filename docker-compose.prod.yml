@@ -36,7 +36,14 @@ services:
     # O teto não impede o pico legítimo; impede que UM serviço leve a máquina
     # inteira. Estourá-lo mata só quem estourou, e o `restart: unless-stopped`
     # o traz de volta — falha isolada em vez de queda geral.
-    mem_limit: 768m
+    #
+    # `mem_limit:` (chave clássica do Compose) não existe pra Swarm — só
+    # `deploy.resources.limits.memory` (ver bloco `deploy:` abaixo). Manter
+    # as duas juntas não é redundância inofensiva: em Docker 28.1.1,
+    # `docker stack deploy` vê `mem_limit:` como opção não suportada e
+    # ABORTA com exit 1 sem imprimir motivo nenhum além do aviso genérico
+    # (achado atualizando esta VPS pra v1.4.0 — o deploy inteiro morria
+    # calado logo depois do aviso "unsupported options: mem_limit").
     # Imagem GENÉRICA pré-buildada: o leigo só puxa (sobe em ~2min, roda em 2GB).
     # Os NEXT_PUBLIC_* reais vêm em RUNTIME (env_file abaixo) — o browser lê via
     # <PublicEnvScript/> e o servidor via lib/env.ts. Não precisa buildar no VPS.
@@ -46,7 +53,12 @@ services:
     # perdeu a chave. Nenhum desses casos quer código não lançado; quem quiser o
     # topo da main pede `APP_IMAGE=…:latest` explicitamente.
     image: ${APP_IMAGE:-ghcr.io/melgarafael/deskcommcrm:stable}
-    pull_policy: ${APP_PULL_POLICY:-always}
+    # pull_policy removido: `docker stack deploy` (Swarm) rejeita essa chave
+    # ("Additional property pull_policy is not allowed"). Quem garante a
+    # imagem atualizada nesta variante é o `docker compose pull` explícito
+    # em stack_up() (_common.sh), antes do deploy — reintroduzida sem querer
+    # pela fusão com o repositório oficial na v1.4.0 (a v1.3.1 já não tinha
+    # esta chave, pelo mesmo motivo).
     restart: unless-stopped
     # ${ENV_FILE:-.env}: `docker stack deploy` (Swarm) não remove as aspas
     # simples que o install.sh grava em cada valor do .env (diferente do
@@ -73,6 +85,9 @@ services:
       janet: {}
     deploy:
       <<: *default-restart
+      resources:
+        limits:
+          memory: 768m
       labels:
         # Habilitado só quando o container está na rede JANet do Traefik
         # existente (variante ORION). Sem efeito em `docker compose up` comum
@@ -114,7 +129,10 @@ services:
     # O teto não impede o pico legítimo; impede que UM serviço leve a máquina
     # inteira. Estourá-lo mata só quem estourou, e o `restart: unless-stopped`
     # o traz de volta — falha isolada em vez de queda geral.
-    mem_limit: 512m
+    #
+    # `mem_limit:` vive só em `deploy.resources.limits.memory` abaixo — ver o
+    # comentário equivalente no serviço `app` sobre por que as duas chaves
+    # juntas derrubam o `docker stack deploy` inteiro em silêncio.
     # Imagem publicada — e não mais `build:` sozinho. O motivo é o modo de falha
     # que isso escondia: serviço build-only é PULADO por `docker compose pull`
     # ("Skipped - No image to be pulled") e imune a `up -d` sem `--build`. Ele era
@@ -136,20 +154,24 @@ services:
     # default): o app pinado numa release e o runtime do agente de
     # IA rodando código não lançado, sobre o banco da release. `:stable` é a
     # última release publicada — pareia com o app em vez de correr na frente.
+    # Variante ORION: `docker stack deploy` ignora `build:` (Swarm não builda),
+    # então o worker PRECISA de um `image:` puxável de registro. O
+    # PATCH-ORION original resolvia isso com uma tag local pré-buildada — mas
+    # esta chave `image:` já estava duplicada (a de cima, ${WORKER_IMAGE:-...
+    # :stable}) desde a integração com o repositório oficial que trouxe a
+    # v1.4.0, e YAML rejeita chave repetida — quebrava o parse do
+    # `docker stack deploy` antes mesmo de tentar subir qualquer coisa
+    # (achado atualizando esta VPS para v1.4.0: "mapping key 'image' already
+    # defined"). Como este fork agora PUBLICA o worker (ghcr.io/<dono
+    # do fork>/deskcomm-worker, ver .github/workflows/publish-image.yml), o
+    # workaround de build local ficou obsoleto: fixamos WORKER_IMAGE no .env
+    # pra tag publicada da versão instalada (mesmo padrão do APP_IMAGE) e
+    # usamos só esta chave.
     image: ${WORKER_IMAGE:-ghcr.io/melgarafael/deskcomm-worker:stable}
-    pull_policy: ${WORKER_PULL_POLICY:-always}
+    # pull_policy removido — ver o comentário equivalente no serviço `app`.
     build:
       context: .
       dockerfile: Dockerfile.worker
-    # Variante ORION: Swarm não builda (`docker stack deploy` ignora `build:`),
-    # então usamos uma tag pré-buildada localmente ANTES do deploy (ver
-    # PATCH-ORION.md — `docker build -f Dockerfile.worker -t
-    # deskcommcrm-worker:local .`). Em compose comum, `image:` é ignorado a
-    # favor do `build:` acima quando a imagem ainda não existe localmente.
-    image: ${WORKER_IMAGE:-deskcommcrm-worker:local}
-    # pull_policy:never removido daqui pelo mesmo motivo do app (Swarm rejeita
-    # a chave) — stack_up() já exclui 'worker' do `docker compose pull`
-    # explícito, então ele nunca tenta puxar essa tag local-only de registro.
     restart: unless-stopped
     # ${ENV_FILE:-.env}: `docker stack deploy` (Swarm) não remove as aspas
     # simples que o install.sh grava em cada valor do .env (diferente do
@@ -168,7 +190,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    deploy: *default-restart
+    deploy:
+      <<: *default-restart
+      resources:
+        limits:
+          memory: 512m
   waha:
     # Teto de memória — 893 MiB de pico MEDIDO nesta VPS.
     #
@@ -181,7 +207,10 @@ services:
     # O teto não impede o pico legítimo; impede que UM serviço leve a máquina
     # inteira. Estourá-lo mata só quem estourou, e o `restart: unless-stopped`
     # o traz de volta — falha isolada em vez de queda geral.
-    mem_limit: 1280m
+    #
+    # `mem_limit:` vive só em `deploy.resources.limits.memory` abaixo — ver o
+    # comentário equivalente no serviço `app` sobre por que as duas chaves
+    # juntas derrubam o `docker stack deploy` inteiro em silêncio.
     # Core grátis por padrão; troque para devlikeapro/waha-plus via WAHA_IMAGE se
     # precisar de multi-número/retry/S3 (licença paga).
     #
@@ -210,7 +239,11 @@ services:
       - waha-media:/app/.media
     logging: *default-logging
     networks: [internal]
-    deploy: *default-restart
+    deploy:
+      <<: *default-restart
+      resources:
+        limits:
+          memory: 1280m
 
   redis:
     image: redis:7-alpine
@@ -257,7 +290,7 @@ services:
     # voltava se a VPS tivesse internet e o mirror do Alpine estivesse de pé,
     # justamente no momento em que a máquina está se recuperando de algo.
     image: ${SCHEDULER_IMAGE:-ghcr.io/melgarafael/deskcomm-scheduler:stable}
-    pull_policy: ${SCHEDULER_PULL_POLICY:-always}
+    # pull_policy removido — ver o comentário equivalente no serviço `app`.
     build:
       context: .
       dockerfile: Dockerfile.scheduler
